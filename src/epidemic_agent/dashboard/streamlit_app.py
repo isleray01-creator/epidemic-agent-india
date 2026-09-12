@@ -5,7 +5,7 @@ from typing import Any
 
 import streamlit as st
 
-from epidemic_agent.config import INDIA_STATES, VARIANT_PARAMS, settings
+from epidemic_agent.config import INDIA_STATES, VARIANT_PARAMS, get_state_population, settings
 from epidemic_agent.graph import get_workflow
 from epidemic_agent.persistence import get_state_store
 from epidemic_agent.state import EpidemicState, SimulationConfig
@@ -58,7 +58,7 @@ def initialize_session_state():
 def create_initial_state(config: SimulationConfig) -> EpidemicState:
     population = {}
     for state in config.states:
-        population[state] = settings.get_state_population(state)
+        population[state] = get_state_population(state)
 
     total_pop = sum(population.values())
     initial_infected_per_state = {
