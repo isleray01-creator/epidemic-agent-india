@@ -94,10 +94,11 @@ class EpidemicWorkflow:
             return _clean_state(result)
         except Exception as e:
             logger.error(f"Workflow step failed: {e}", exc_info=True)
-            state["metadata"] = state.get("metadata", {})
-            state["metadata"]["error"] = str(e)
-            state["metadata"]["error_traceback"] = traceback.format_exc()
-            return _clean_state(state)
+            error_state = state.copy()
+            error_state["metadata"] = error_state.get("metadata", {}).copy()
+            error_state["metadata"]["error"] = str(e)
+            error_state["metadata"]["error_traceback"] = traceback.format_exc()
+            return _clean_state(error_state)
 
 
 _workflow: EpidemicWorkflow | None = None

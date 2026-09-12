@@ -155,7 +155,10 @@ class Backtester:
         ss_tot = np.sum((r - np.mean(r)) ** 2)
         r_squared = 1.0 - (ss_res / max(ss_tot, 1e-10))
 
-        corr = float(np.corrcoef(r, s)[0, 1]) if n > 1 else 0.0
+        corr = 0.0
+        if n > 1 and np.std(r) > 1e-10 and np.std(s) > 1e-10:
+            corr_val = np.corrcoef(r, s)[0, 1]
+            corr = float(corr_val) if np.isfinite(corr_val) else 0.0
 
         real_peak = int(np.argmax(r))
         sim_peak = int(np.argmax(s))
@@ -309,11 +312,11 @@ def run_full_backtest(waves: list[dict] = None) -> dict[str, Any]:
         for r in wave_results:
             all_results.append(r)
 
-    in_sample_r2 = np.mean([r.metrics.r_squared for r in all_results])
+    in_sample_r2 = np.mean([r.metrics.r_squared for r in all_results]) if all_results else 0.0
     cv_results = [r for r in all_results if r.cv_metrics]
     out_sample_corr = np.mean([r.cv_metrics.get("cv_corr_mean", 0) for r in cv_results]) if cv_results else 0.0
-    overall_corr = np.mean([r.metrics.correlation for r in all_results])
-    overall_mape = np.mean([r.metrics.mape for r in all_results])
+    overall_corr = np.mean([r.metrics.correlation for r in all_results]) if all_results else 0.0
+    overall_mape = np.mean([r.metrics.mape for r in all_results]) if all_results else 0.0
 
     total_real_cases = sum(sum(r.real_daily_cases) for r in all_results)
     total_sim_cases = sum(sum(r.sim_daily_cases) for r in all_results)

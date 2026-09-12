@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -29,7 +32,7 @@ class Settings(BaseSettings):
     processed_data_dir: Path = Path("data/processed")
     chroma_db_dir: Path = Path("chroma_db")
 
-    default_population: int = 1_000_000
+    default_population: int = 1_400_000_000
     default_simulation_days: int = 90
 
 
@@ -166,7 +169,10 @@ COMORBIDITY_IFR_MULTIPLIER = 2.5
 
 
 def get_variant_params(variant: str) -> dict[str, float]:
-    return VARIANT_PARAMS.get(variant.lower(), VARIANT_PARAMS["wildtype"])
+    key = variant.lower()
+    if key not in VARIANT_PARAMS:
+        logger.warning(f"Unknown variant '{variant}', falling back to wildtype")
+    return VARIANT_PARAMS.get(key, VARIANT_PARAMS["wildtype"])
 
 
 def get_state_population(state: str) -> int:
@@ -209,4 +215,6 @@ def get_state_population(state: str) -> int:
         "Ladakh": 300_000,
         "Lakshadweep": 70_000,
     }
+    if state not in populations:
+        logger.warning(f"Unknown state '{state}', using default population 1,000,000")
     return populations.get(state, 1_000_000)

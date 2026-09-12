@@ -31,6 +31,7 @@ class SEIRModel:
     lockdown_reduction: float = 0.0
     mask_reduction: float = 0.0
     vaccination_rate_multiplier: float = 1.0
+    variant: str = "wildtype"
 
     def __post_init__(self):
         self.beta = self.R0 / self.infectious_period
@@ -59,19 +60,19 @@ class SEIRModel:
 
         new_infections = effective_beta * S * I / N
         new_exposed = new_infections
-        new_infectious = self.sigma * E
-        new_recovered = self.gamma * I
+        leaving_infectious = self.sigma * E
+        new_recovered_no_death = self.gamma * I
 
         avg_IFR = self.IFR * np.mean(list(AGE_IFR_MULTIPLIER.values()))
         avg_IFR *= (1 - self.vaccinated_fraction * self.vaccine_efficacy)
         avg_IFR *= (1 + 0.25 * (COMORBIDITY_IFR_MULTIPLIER - 1))
 
-        new_deaths = avg_IFR * new_recovered
+        new_deaths = avg_IFR * leaving_infectious
 
         dS = -new_infections
-        dE = new_exposed - new_infectious
-        dI = new_infectious - new_recovered
-        dR = new_recovered - new_deaths
+        dE = new_exposed - leaving_infectious
+        dI = leaving_infectious - new_recovered_no_death
+        dR = new_recovered_no_death - new_deaths
         dD = new_deaths
 
         return [dS, dE, dI, dR, dD]
@@ -80,10 +81,10 @@ class SEIRModel:
         S0 = self.population - self.initial_infected
         E0 = self.initial_infected // 2
         I0 = self.initial_infected - E0
-        R0 = 0
+        R_init = 0
         D0 = 0
 
-        y0 = [S0, E0, I0, R0, D0]
+        y0 = [S0, E0, I0, R_init, D0]
         t_span = (0, self.days)
         t_eval = np.arange(0, self.days + 1, 1)
 
@@ -99,20 +100,16 @@ class SEIRModel:
 
         S, E, I, R, D = solution.y
 
-        daily_cases = np.diff(np.concatenate([[0], R + D]))
-        daily_cases = np.maximum(daily_cases, 0)
-        daily_deaths = np.diff(np.concatenate([[0], D]))
-        daily_deaths = np.maximum(daily_deaths, 0)
+        daily_cases = np.maximum(-np.diff(S), 0)
+        daily_deaths = np.maximum(np.diff(D), 0)
 
         Rt = []
         for i in range(len(I)):
-            if i == 0:
-                Rt.append(self.R0)
+            N_i = S[i] + E[i] + I[i] + R[i] + D[i]
+            if N_i > 0:
+                Rt.append(self.beta * S[i] / (self.gamma * N_i))
             else:
-                if I[i-1] > 0:
-                    Rt.append(daily_cases[i] / I[i-1] * self.infectious_period)
-                else:
-                    Rt.append(1.0)
+                Rt.append(1.0)
 
         cumulative_cases = np.cumsum(daily_cases)
         cumulative_deaths = np.cumsum(daily_deaths)
@@ -122,6 +119,7 @@ class SEIRModel:
         total_deaths = int(D[-1])
         final_infected = int(self.population - S[-1])
 
+        n_days = len(daily_cases)
         state_results = {}
         for state in self.states:
             state_results[state] = {
@@ -134,7 +132,7 @@ class SEIRModel:
                 "peak_cases": peak_cases,
                 "total_deaths": total_deaths,
                 "final_infected": final_infected,
-                "variant_trajectory": ["current_variant"] * self.days,
+                "variant_trajectory": [self.variant] * n_days,
             }
 
         return SimulationResult(

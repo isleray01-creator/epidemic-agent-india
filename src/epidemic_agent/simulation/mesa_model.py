@@ -48,7 +48,6 @@ class PersonAgent(Agent):
             if self.days_infected >= self.model.incubation_period:
                 self.status = "infected"
                 self.days_infected = 0
-                self.model.new_infections_today += 1
 
         elif self.status == "infected":
             self.days_infected += 1
@@ -78,12 +77,10 @@ class PersonAgent(Agent):
             else:
                 infection_prob = self.model.transmission_prob
 
-            if neighbor.has_comorbidity:
-                infection_prob *= 1.5
-
             if random.random() < infection_prob:
                 neighbor.status = "exposed"
                 neighbor.days_infected = 0
+                self.model.new_infections_today += 1
                 self.model._state_infections_today[neighbor.state_name] += 1
 
     def _resolve_infection(self):
@@ -124,6 +121,7 @@ class EpidemicModel(Model):
         lockdown_reduction: float = 0.0,
         mask_reduction: float = 0.0,
         vaccination_rate_multiplier: float = 1.0,
+        variant: str = "wildtype",
         random_seed: int = 42,
     ):
         super().__init__(seed=random_seed)
@@ -143,6 +141,7 @@ class EpidemicModel(Model):
         self.infectious_period = max(1, int(infectious_period))
         self.days = days
         self.states = states
+        self.variant = variant
 
         self.contact_tracing_enabled = contact_tracing_enabled
         self.tracing_efficiency = max(0.0, min(1.0, float(tracing_efficiency)))
@@ -152,15 +151,16 @@ class EpidemicModel(Model):
         self.mask_reduction = max(0.0, min(1.0, float(mask_reduction)))
         self.vaccination_rate_multiplier = max(0.0, float(vaccination_rate_multiplier))
 
-        grid_size = max(10, int(np.sqrt(population / 10)))
+        grid_size = max(10, int(np.sqrt(population / 50)))
         self.grid = MultiGrid(grid_size, grid_size, torus=True)
 
-        self.transmission_prob = R0 / (self.infectious_period * 10)
-        self.transmission_prob *= (1 - self.lockdown_reduction)
-        self.transmission_prob *= (1 - self.mask_reduction)
+        effective_R0 = R0
+        effective_R0 *= (1 - self.lockdown_reduction)
+        effective_R0 *= (1 - self.mask_reduction)
+        self.transmission_prob = effective_R0 / self.infectious_period
         self.transmission_prob = max(0.0, min(1.0, self.transmission_prob))
 
-        self.contacts_per_day = 10
+        self.contacts_per_day = max(1, int(np.sqrt(grid_size)))
 
         self.new_infections_today = 0
         self.deaths_today = 0
@@ -182,9 +182,16 @@ class EpidemicModel(Model):
     def _create_agents(self, initial_infected: int):
         state_pops = {s: get_state_population(s) for s in self.states}
         total_pop = sum(state_pops.values())
-        agents_per_state = {s: int(state_pops[s] / total_pop * self.population) for s in self.states}
+
+        raw = {s: state_pops[s] / total_pop * self.population for s in self.states}
+        agents_per_state = {s: int(v) for s, v in raw.items()}
+        remainder = self.population - sum(agents_per_state.values())
+        if remainder > 0:
+            largest = max(agents_per_state, key=agents_per_state.get)
+            agents_per_state[largest] += remainder
 
         infected_assigned = 0
+        all_agents = []
 
         for state, count in agents_per_state.items():
             districts = [f"{state}_D{i}" for i in range(max(1, count // 50000))]
@@ -199,11 +206,15 @@ class EpidemicModel(Model):
                 x = self.random.randrange(self.grid.width)
                 y = self.random.randrange(self.grid.height)
                 self.grid.place_agent(agent, (x, y))
+                all_agents.append(agent)
 
-                if infected_assigned < initial_infected and random.random() < 0.01:
-                    agent.status = "infected"
-                    agent.days_infected = random.randint(0, self.infectious_period)
-                    infected_assigned += 1
+        if initial_infected > 0 and all_agents:
+            n_infected = min(initial_infected, len(all_agents))
+            infected_agents = random.sample(all_agents, n_infected)
+            for agent in infected_agents:
+                agent.status = "infected"
+                agent.days_infected = random.randint(0, self.infectious_period)
+                infected_assigned += 1
 
         logger.info(f"Created agents across {len(self.states)} states, {infected_assigned} initially infected")
 
@@ -237,13 +248,21 @@ class EpidemicModel(Model):
             prev_deaths = self.cumulative_deaths[state][-1] if self.cumulative_deaths[state] else 0
             self.cumulative_deaths[state].append(prev_deaths + state_deaths)
 
-            if len(self.daily_cases[state]) > 1:
+            if len(self.daily_cases[state]) >= 7:
+                recent_avg = np.mean(self.daily_cases[state][-7:])
+                prev_avg = np.mean(self.daily_cases[state][-8:-1]) if len(self.daily_cases[state]) >= 8 else recent_avg
+                if prev_avg > 0:
+                    Rt = (recent_avg / prev_avg) * self.R0
+                else:
+                    Rt = self.R0
+            elif len(self.daily_cases[state]) > 1:
                 prev_state_cases = self.daily_cases[state][-2]
                 Rt = state_infections / max(prev_state_cases, 1) * self.R0
             else:
                 Rt = self.R0
+            Rt = max(0.01, min(Rt, 15.0))
             self.daily_Rt[state].append(Rt)
-            self.variant_trajectory[state].append("current_variant")
+            self.variant_trajectory[state].append(self.variant)
 
     def _perform_contact_tracing(self):
         infected_agents = [a for a in self.agents if a.status == "infected" and not a.traced]

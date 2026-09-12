@@ -56,7 +56,7 @@ def simulate_spread(
     states = states or ["Maharashtra", "Kerala", "Delhi"]
     interventions = interventions or ["contact_tracing"]
     population = population or settings.default_population
-    population = min(population, settings.default_population)
+    population = max(1, int(population))
 
     variant_params = get_variant_params(variant)
     base_params = {
@@ -70,6 +70,7 @@ def simulate_spread(
         "initial_infected": initial_infected,
         "days": days,
         "states": states,
+        "variant": variant,
     }
 
     params = _merge_intervention_params(interventions, base_params)

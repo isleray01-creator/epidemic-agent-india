@@ -248,7 +248,7 @@ class RichardsFitter:
         population: int,
         maxiter: int = 150,
     ) -> RichardsParams:
-        cache_key = self._cache_key(daily_cases, "_cases_v7")
+        cache_key = self._cache_key(daily_cases, f"_cases_v7_pop{population}")
         cached = self._load_cache(cache_key)
         if cached is not None:
             return cached

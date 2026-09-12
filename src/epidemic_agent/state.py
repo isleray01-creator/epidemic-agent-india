@@ -15,7 +15,7 @@ class VariantShockInfo(BaseModel):
 class InterventionRecord(BaseModel):
     day: int
     intervention_type: str
-    params: dict[str, Any]
+    params: dict[str, Any] = Field(default_factory=dict)
     cost: float
     projected_effect: dict[str, float]
 

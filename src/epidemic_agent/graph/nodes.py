@@ -99,7 +99,7 @@ def analyze_situation(state: EpidemicState) -> EpidemicState:
 
                 cases = state_df["confirmed"].fillna(0)
                 deaths = state_df["deceased"].fillna(0)
-                vaccination = state_df.get("tested")
+                vaccination = None
 
                 params = learner.learn_from_wave(
                     cases=cases,
@@ -224,6 +224,8 @@ def llm_reasoning(state: EpidemicState) -> EpidemicState:
             uncertainty_factors=["reasoning_module_error"],
             policy_ranking=[],
             failure_detected=False,
+            failure_type="reasoning_error",
+            recovery_action=f"Using fallback policies due to: {e}",
         )
 
     state["metadata"]["reasoning_result"] = {
@@ -395,9 +397,16 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
 def simulate_outcomes(state: EpidemicState) -> EpidemicState:
     logger.info(f"Day {state['current_day']}: Simulating outcomes")
 
-    all_policies = state["current_policies"].values()
-    interventions = list(set().union(*all_policies)) if all_policies else ["contact_tracing"]
-    variant = list(state["active_variants"].values())[0] if state["active_variants"] else "wildtype"
+    all_policies = list(state["current_policies"].values())
+    if all_policies:
+        interventions = list(set().union(*all_policies))
+    else:
+        interventions = ["contact_tracing"]
+
+    if state["active_variants"]:
+        variant = max(state["active_variants"].values(), key=lambda v: list(state["active_variants"].values()).count(v))
+    else:
+        variant = "wildtype"
 
     sim_result = simulate_spread.invoke({
         "model_type": "mesa",
@@ -414,7 +423,9 @@ def simulate_outcomes(state: EpidemicState) -> EpidemicState:
         state["metadata"]["predicted_outcomes"] = result
 
         for s in state["states"]:
-            state["Rt_estimates"][s] = float(result["daily_Rt"].get(s, [1.0])[-1])
+            rt_list = result.get("daily_Rt", {}).get(s, [])
+            if rt_list:
+                state["Rt_estimates"][s] = float(rt_list[-1])
 
         logger.info(f"Simulation complete. Projected deaths: {sum(result['total_deaths'].values())}")
     else:
@@ -493,7 +504,8 @@ def implement_or_adapt(state: EpidemicState) -> EpidemicState:
 def finalize_recommendation(state: EpidemicState) -> EpidemicState:
     logger.info(f"Day {state['current_day']}: Finalizing recommendation")
 
-    interventions = list(set().union(*state["current_policies"].values())) if state["current_policies"] else []
+    all_policies = list(state["current_policies"].values())
+    interventions = list(set().union(*all_policies)) if all_policies else []
     predicted = state["metadata"].get("predicted_outcomes", {})
     reasoning = state.get("metadata", {}).get("reasoning_result", {})
 
@@ -559,7 +571,8 @@ def _generate_rationale(state: EpidemicState) -> str:
     if shock.get("shock_detected"):
         parts.append(f"Variant shock detected ({shock.get('severity')}): {shock.get('recommended_action')}")
 
-    interventions = list(set().union(*state["current_policies"].values())) if state["current_policies"] else []
+    all_policies = list(state["current_policies"].values())
+    interventions = list(set().union(*all_policies)) if all_policies else []
     if interventions:
         parts.append(f"Recommended interventions: {', '.join(interventions)}")
 
