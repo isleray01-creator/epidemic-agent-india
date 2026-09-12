@@ -265,19 +265,24 @@ class RichardsFitter:
         candidates.sort(key=lambda x: x[4])
         best_name, best_params, best_r2, best_pred, best_bic, best_np = candidates[0]
 
-        best_params.best_model = best_name
-        best_params.ensemble_weights = {
-            name: max(0, r2) for name, _, r2, _, _, _ in candidates
-        }
+        bic_weights = []
+        for name, params, r2, pred, bic, np_params in candidates:
+            w = np.exp(-0.5 * (bic - candidates[0][4]))
+            bic_weights.append((name, params, w, pred))
 
-        total_weight = sum(best_params.ensemble_weights.values())
-        if total_weight > 0:
-            best_params.ensemble_weights = {
-                k: round(v / total_weight, 3) for k, v in best_params.ensemble_weights.items()
-            }
+        total_w = sum(w for _, _, w, _ in bic_weights)
+        if total_w > 0:
+            bic_weights = [(n, p, w / total_w, pred) for n, p, w, pred in bic_weights]
+
+        ensemble_pred = np.zeros(days)
+        for name, params, w, pred in bic_weights:
+            ensemble_pred += w * pred
+
+        best_params.best_model = best_name
+        best_params.ensemble_weights = {name: round(w, 3) for name, _, w, _ in bic_weights}
 
         logger.info(f"Best model: {best_name} (R2={best_r2:.3f}, BIC={best_bic:.1f}), "
-                    f"candidates: {[(n, f'{r:.3f}', f'bic={b:.0f}') for n, _, r, _, b, _ in candidates]}")
+                    f"weights: {best_params.ensemble_weights}")
 
         self._save_cache(cache_key, best_params)
         return best_params
@@ -304,7 +309,7 @@ class RichardsFitter:
             peak_err = ((np.max(pred) - np.max(daily_cases)) / max(np.max(daily_cases), 1)) ** 2
             timing_err = ((int(np.argmax(pred)) - peak_day) / max(days, 1)) ** 2
             total_err = ((np.sum(pred) - total_cases) / max(total_cases, 1)) ** 2
-            sigma_penalty = 0.01 * max(0, sigma - 2.0) ** 2
+            sigma_penalty = 0.05 * max(0, sigma - 1.5) ** 2
 
             return cum_err + 3.0 * daily_err + 2.0 * peak_err + 1.0 * timing_err + 2.0 * total_err + sigma_penalty
 
