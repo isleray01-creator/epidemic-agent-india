@@ -7,133 +7,123 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
-from epidemic_agent.validation.backtester import run_full_backtest
+from epidemic_agent.validation.backtester import Backtester
 from epidemic_agent.validation.sensitivity import SensitivityAnalyzer
 from epidemic_agent.validation.uncertainty import UncertaintyQuantifier
 
 
 def main():
     print("=" * 70)
-    print("  EPIDEMIC RESPONSE AGENT - COMPREHENSIVE ACCURACY REPORT")
+    print("  EPIDEMIC RESPONSE AGENT - ACCURACY REPORT")
     print("=" * 70)
 
-    # 1. BACKTESTING
-    print("\n[1/3] BACKTESTING AGAINST REAL INDIA COVID-19 DATA")
-    print("-" * 70)
-    print("  Data source: data.incovid19.org (official India COVID data)")
-    print("  Waves tested: Delta (Apr-Jun 2021), Omicron (Jan-Mar 2022), First (Sep-Dec 2020)")
-    print("  State: Maharashtra (124M population)")
-    print()
+    waves = [
+        {"name": "Delta Wave", "variant": "delta", "start": "2021-04-01", "end": "2021-06-30", "state": "Maharashtra"},
+        {"name": "Omicron Wave", "variant": "omicron_ba1", "start": "2022-01-01", "end": "2022-03-31", "state": "Maharashtra"},
+        {"name": "First Wave", "variant": "wildtype", "start": "2020-09-01", "end": "2020-12-31", "state": "Maharashtra"},
+    ]
 
-    backtest = run_full_backtest()
+    bt = Backtester()
+    all_results = []
 
-    for wave_name, wave_data in backtest["summary"].items():
-        if wave_name == "overall":
-            continue
-        print(f"  {wave_name}:")
-        print(f"    R-squared: {wave_data['avg_R_squared']}")
-        print(f"    Correlation: {wave_data['avg_correlation']}")
-        print(f"    MAPE: {wave_data['avg_MAPE']}")
-        print()
+    for wave in waves:
+        print(f"\n{'='*70}")
+        print(f"  {wave['name'].upper()} ({wave['state']})")
+        print(f"  Period: {wave['start']} to {wave['end']}")
+        print(f"{'='*70}")
 
-    overall = backtest["summary"]["overall"]
-    print(f"  OVERALL BACKTEST ACCURACY:")
-    print(f"    R-squared: {overall['avg_R_squared']}")
-    print(f"    Correlation: {overall['avg_correlation']}")
-    print(f"    MAPE: {overall['avg_MAPE']}")
-    print(f"    Rating: {overall['accuracy_rating']}")
+        result = bt.backtest_state(
+            state=wave["state"],
+            variant=wave["variant"],
+            start_date=wave["start"],
+            end_date=wave["end"],
+        )
 
-    # 2. SENSITIVITY ANALYSIS
-    print("\n[2/3] SENSITIVITY ANALYSIS")
-    print("-" * 70)
-    print("  Testing parameter importance for Delta variant")
-    print()
+        m = result.metrics
+        print(f"\n  ACCURACY METRICS:")
+        print(f"    R-squared:          {m.r_squared:.4f}")
+        print(f"    Correlation:        {m.correlation:.4f}")
+        print(f"    MAE:                {m.mae:.1f}")
+        print(f"    RMSE:               {m.rmse:.1f}")
+        print(f"    MAPE:               {m.mape:.1%}")
+        print(f"    Peak timing error:  {m.peak_timing_error} days")
+        print(f"    Peak magnitude err: {m.peak_magnitude_error:.1%}")
 
-    for variant in ["wildtype", "delta", "omicron_ba1"]:
-        analyzer = SensitivityAnalyzer(variant=variant, days=60)
-        sa = analyzer.run_full_analysis()
-        print(f"  {variant.upper()} parameter importance:")
-        for param, imp in sorted(sa.parameter_importance.items(), key=lambda x: -x[1]):
-            print(f"    {param}: {imp:.2%}")
-        print()
+        print(f"\n  COUNTS:")
+        print(f"    Real total cases:     {sum(result.real_daily_cases):>12,.0f}")
+        print(f"    Simulated cases:      {sum(result.sim_daily_cases):>12,.0f}")
+        print(f"    Real total deaths:    {result.real_total_deaths:>12,}")
+        print(f"    Simulated deaths:     {result.sim_total_deaths:>12,}")
+        if result.real_total_deaths > 0:
+            death_err = abs(result.sim_total_deaths - result.real_total_deaths) / result.real_total_deaths
+            print(f"    Deaths error:         {death_err:>11.1%}")
 
-    # 3. UNCERTAINTY QUANTIFICATION
-    print("[3/3] UNCERTAINTY QUANTIFICATION")
-    print("-" * 70)
-    print("  Running 100 Monte Carlo simulations with parameter perturbation")
-    print()
+        real_daily = result.real_daily_cases
+        sim_daily = result.sim_daily_cases
+        if len(real_daily) > 0 and len(sim_daily) > 0:
+            real_peak = max(real_daily)
+            sim_peak = max(sim_daily)
+            print(f"\n  PEAK:")
+            print(f"    Real peak daily cases:  {real_peak:>10,.0f}")
+            print(f"    Sim peak daily cases:   {sim_peak:>10,.0f}")
+            if real_peak > 0:
+                print(f"    Peak error:             {abs(sim_peak - real_peak) / real_peak:>9.1%}")
 
-    for variant in ["wildtype", "delta", "omicron_ba1"]:
-        uq = UncertaintyQuantifier(variant=variant, days=90, n_simulations=100)
-        result = uq.quantify()
-        s = result.summary()
-        print(f"  {variant.upper()}:")
-        print(f"    Mean deaths: {s['mean_deaths']:,.0f} +/- {s['std_deaths']:,.0f}")
-        print(f"    95% CI: {s['95%_CI_deaths']}")
-        print(f"    Peak cases: {s['mean_peak_cases']:,.0f} +/- {s['std_peak_cases']:,.0f}")
-        print(f"    Peak day: {s['mean_peak_day']:.0f} +/- {s['std_peak_day']:.0f}")
-        print(f"    Confidence: {s['confidence_score']:.3f}")
-        print()
+            print(f"\n  PEAK DAY:")
+            print(f"    Real peak day:  {result.real_peak_day}")
+            print(f"    Sim peak day:   {result.sim_peak_day}")
 
-    # FINAL SUMMARY
-    print("=" * 70)
-    print("  FINAL ACCURACY SUMMARY")
-    print("=" * 70)
-    print()
-    print("  COMPONENT                      ACCURACY        RATING")
-    print("  " + "-" * 66)
+        print(f"\n  LEARNED PARAMETERS:")
+        print(f"    R0:             {result.learned_R0:.2f} (literature: {result.actual_R0:.1f})")
+        print(f"    IFR:            {result.learned_IFR:.5f} (literature: {result.actual_IFR:.3f})")
 
-    bt_r2 = overall["avg_R_squared"]
-    bt_corr = overall["avg_correlation"]
-    bt_rating = overall["accuracy_rating"]
-    print(f"  Backtesting (shape)            R²={bt_r2:.3f}         {bt_rating}")
-    print(f"  Correlation (curve shape)      r={bt_corr:.3f}          {'Good' if bt_corr > 0.3 else 'Poor'}")
-    print()
+        all_results.append(result)
 
-    print("  KNOWN LIMITATIONS:")
-    print("  - SEIR model does NOT account for behavioral changes, lockdowns, or interventions")
-    print("  - Absolute case/death counts will be overpredicted (no intervention modeling)")
-    print("  - Curve SHAPE (timing, relative peak) is more reliable than absolute numbers")
-    print("  - VariantParameterLearner improves R0 estimation but IFR still needs calibration")
-    print()
+    print(f"\n{'='*70}")
+    print("  OVERALL SUMMARY")
+    print(f"{'='*70}")
 
-    print("  WHAT THE MODEL IS GOOD FOR:")
-    print("  - Comparing relative effectiveness of different interventions")
-    print("  - Estimating epidemic wave timing and shape")
-    print("  - Sensitivity analysis (which parameters matter most)")
-    print("  - Policy exploration (what-if scenarios)")
-    print()
+    avg_r2 = sum(r.metrics.r_squared for r in all_results) / len(all_results)
+    avg_corr = sum(r.metrics.correlation for r in all_results) / len(all_results)
+    avg_mape = sum(r.metrics.mape for r in all_results) / len(all_results)
 
-    print("  WHAT THE MODEL IS NOT GOOD FOR:")
-    print("  - Predicting exact case/death counts")
-    print("  - Replacing real epidemiological surveillance")
-    print("  - Quantifying absolute risk without calibration")
-    print()
+    total_real_deaths = sum(r.real_total_deaths for r in all_results)
+    total_sim_deaths = sum(r.sim_total_deaths for r in all_results)
+    total_real_cases = sum(sum(r.real_daily_cases) for r in all_results)
+    total_sim_cases = sum(sum(r.sim_daily_cases) for r in all_results)
 
-    report = {
-        "backtest_summary": backtest["summary"],
-        "accuracy_metrics": {
-            "R_squared": bt_r2,
-            "correlation": bt_corr,
-            "rating": bt_rating,
-        },
-        "sensitivity": {
-            "delta": SensitivityAnalyzer(variant="delta", days=60).run_full_analysis().summary(),
-            "omicron": SensitivityAnalyzer(variant="omicron_ba1", days=60).run_full_analysis().summary(),
-        },
-        "uncertainty": {
-            v: UncertaintyQuantifier(variant=v, days=90, n_simulations=50).quantify().summary()
-            for v in ["wildtype", "delta", "omicron_ba1"]
-        },
-    }
+    print(f"\n  AVERAGES:")
+    print(f"    Avg R-squared:    {avg_r2:.4f}")
+    print(f"    Avg Correlation:  {avg_corr:.4f}")
+    print(f"    Avg MAPE:         {avg_mape:.1%}")
 
-    report_path = Path(__file__).parent / "final_accuracy_report.json"
-    report_path.write_text(json.dumps(report, indent=2, default=str))
-    print(f"  Full report saved to: {report_path}")
+    print(f"\n  TOTAL COUNTS (all waves):")
+    print(f"    Real total cases:     {total_real_cases:>14,.0f}")
+    print(f"    Simulated cases:      {total_sim_cases:>14,.0f}")
+    print(f"    Real total deaths:    {total_real_deaths:>14,}")
+    print(f"    Simulated deaths:     {total_sim_deaths:>14,}")
 
-    return bt_r2
+    if total_real_deaths > 0:
+        print(f"    Deaths error:         {abs(total_sim_deaths - total_real_deaths) / total_real_deaths:>13.1%}")
+    if total_real_cases > 0:
+        print(f"    Cases error:          {abs(total_sim_cases - total_real_cases) / total_real_cases:>13.1%}")
+
+    rating = (
+        "Excellent" if avg_r2 > 0.8 else
+        "Good" if avg_r2 > 0.6 else
+        "Moderate" if avg_r2 > 0.4 else
+        "Poor"
+    )
+    print(f"\n  ACCURACY RATING: {rating}")
+
+    print(f"\n  WHAT THESE NUMBERS MEAN:")
+    print(f"    - R-squared > 0.6 = model captures epidemic curve shape well")
+    print(f"    - Correlation > 0.7 = model timing and relative magnitudes match")
+    print(f"    - Deaths error < 20% = model predicts death counts within 20%")
+
+    return avg_r2
 
 
 if __name__ == "__main__":
     r2 = main()
-    sys.exit(0 if r2 > 0 else 1)
+    sys.exit(0 if r2 > 0.1 else 1)

@@ -132,14 +132,14 @@ def evaluate_policy(
 
 
 def _eval_contact_tracing(state, current_state, variant, projection_days):
-    return evaluate_contact_tracing(
-        state=state,
-        current_cases=current_state.get("infected", {}).get(state, 100),
-        current_Rt=current_state.get("Rt_estimates", {}).get(state, 1.0),
-        population=current_state.get("population", {}).get(state),
-        variant=variant,
-        projection_days=projection_days,
-    )
+    return evaluate_contact_tracing.invoke({
+        "state": state,
+        "current_cases": current_state.get("infected", {}).get(state, 100),
+        "current_Rt": current_state.get("Rt_estimates", {}).get(state, 1.0),
+        "population": current_state.get("population", {}).get(state),
+        "variant": variant,
+        "projection_days": projection_days,
+    })
 
 
 def _eval_lockdown(state, current_state, variant, projection_days):

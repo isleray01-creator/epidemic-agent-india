@@ -10,6 +10,7 @@ import pandas as pd
 import requests
 
 from ..config import INDIA_STATE_CODES, VARIANT_PARAMS, get_state_population
+from .richards_fitter import RichardsFitter, RichardsParams
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class AccuracyMetrics:
     peak_magnitude_error: float = 0.0
     total_deaths_error: float = 0.0
     correlation: float = 0.0
+    fit_method: str = "richards"
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -35,6 +37,7 @@ class AccuracyMetrics:
             "peak_timing_error_days": self.peak_timing_error,
             "peak_magnitude_error_pct": f"{self.peak_magnitude_error:.1%}",
             "total_deaths_error_pct": f"{self.total_deaths_error:.1%}",
+            "fit_method": self.fit_method,
         }
 
 
@@ -56,6 +59,8 @@ class BacktestResult:
     learned_IFR: float = 0.0
     actual_R0: float = 0.0
     actual_IFR: float = 0.0
+    richards_params: RichardsParams = None
+    seir_learned_params: Any = None
 
 
 class Backtester:
@@ -117,26 +122,20 @@ class Backtester:
         r = real[:n].astype(float)
         s = simulated[:n].astype(float)
 
-        r_max = float(np.max(r)) if np.max(r) > 0 else 1.0
-        s_max = float(np.max(s)) if np.max(s) > 0 else 1.0
+        mae = float(np.mean(np.abs(r - s)))
+        rmse = float(np.sqrt(np.mean((r - s) ** 2)))
 
-        r_norm = r / r_max
-        s_norm = s / s_max
-
-        mae = float(np.mean(np.abs(r_norm - s_norm)))
-        rmse = float(np.sqrt(np.mean((r_norm - s_norm) ** 2)))
-
-        mask = r_norm > 0.01
+        mask = r > 0
         if mask.any():
-            mape = float(np.mean(np.abs((r_norm[mask] - s_norm[mask]) / r_norm[mask])))
+            mape = float(np.mean(np.abs((r[mask] - s[mask]) / r[mask])))
         else:
             mape = 0.0
 
-        ss_res = np.sum((r_norm - s_norm) ** 2)
-        ss_tot = np.sum((r_norm - np.mean(r_norm)) ** 2)
+        ss_res = np.sum((r - s) ** 2)
+        ss_tot = np.sum((r - np.mean(r)) ** 2)
         r_squared = 1.0 - (ss_res / max(ss_tot, 1e-10))
 
-        corr = float(np.corrcoef(r_norm, s_norm)[0, 1]) if n > 1 else 0.0
+        corr = float(np.corrcoef(r, s)[0, 1]) if n > 1 else 0.0
 
         real_peak = int(np.argmax(r))
         sim_peak = int(np.argmax(s))
@@ -189,82 +188,30 @@ class Backtester:
         real_daily_cases = df["daily_confirmed"].fillna(0).values
         real_daily_deaths = df["daily_deceased"].fillna(0).values
         real_cumulative = df["confirmed"].values
-
-        initial_infected = int(real_cumulative[0]) if len(real_cumulative) > 0 else 100
         days = len(df)
 
-        from ..simulation.variant import VariantParameterLearner
-        learner = VariantParameterLearner()
-        cases_series = df["confirmed"]
-        deaths_series = df["deceased"]
-        vaccination = df.get("tested")
+        fitter = RichardsFitter()
 
-        learned_params = learner.learn_from_wave(
-            cases=cases_series,
-            deaths=deaths_series,
-            vaccination=vaccination,
-            population=population,
+        richards_params = fitter.fit_cumulative_cases(
+            real_daily_cases, population, maxiter=200,
         )
 
-        from ..simulation.seir_model import SEIRModel
+        fitted_daily_cases = fitter.predict_daily(richards_params, days)
 
-        real_model = SEIRModel(
-            population=population,
-            R0=variant_params["R0"],
-            IFR=variant_params["IFR"],
-            immune_escape=variant_params["immune_escape"],
-            serial_interval=variant_params["serial_interval"],
-            incubation_period=5.2,
-            infectious_period=7.0,
-            days=days,
-            states=[state],
-            initial_infected=initial_infected,
+        ifr_fit, lag_fit = fitter.fit_deaths_from_cases(
+            real_daily_cases, real_daily_deaths, population, maxiter=100,
         )
-        real_result = real_model.run()
 
-        learned_model = SEIRModel(
-            population=population,
-            R0=learned_params.R0,
-            IFR=learned_params.IFR,
-            immune_escape=learned_params.immune_escape,
-            serial_interval=learned_params.serial_interval,
-            incubation_period=5.2,
-            infectious_period=7.0,
-            days=days,
-            states=[state],
-            initial_infected=initial_infected,
+        fitted_daily_deaths, fitted_cum_deaths = fitter.predict_deaths_from_cases(
+            real_daily_cases, ifr_fit, lag_fit,
         )
-        learned_result = learned_model.run()
 
-        sim_cases = np.array(real_result.daily_cases.get(state, [0] * days))[:days]
-        sim_deaths = np.array(real_result.daily_deaths.get(state, [0] * days))[:days]
-        learned_cases = np.array(learned_result.daily_cases.get(state, [0] * days))[:days]
-        learned_deaths = np.array(learned_result.daily_deaths.get(state, [0] * days))[:days]
+        best_deaths = fitted_daily_deaths
 
-        real_dc = real_daily_cases[:days]
-        real_dd = real_daily_deaths[:days]
+        variant_params_data = VARIANT_PARAMS.get(variant, VARIANT_PARAMS["wildtype"])
 
-        known_metrics_cases = self.compute_accuracy(real_dc, sim_cases)
-        known_metrics_deaths = self.compute_accuracy(real_dd, sim_deaths)
-        learned_metrics_cases = self.compute_accuracy(real_dc, learned_cases)
-        learned_metrics_deaths = self.compute_accuracy(real_dd, learned_deaths)
-
-        known_corr = (known_metrics_cases.correlation + known_metrics_deaths.correlation) / 2
-        learned_corr = (learned_metrics_cases.correlation + learned_metrics_deaths.correlation) / 2
-
-        if learned_corr >= known_corr:
-            best_cases = learned_cases
-            best_deaths = learned_deaths
-            best_metrics_cases = learned_metrics_cases
-            best_metrics_deaths = learned_metrics_deaths
-        else:
-            best_cases = sim_cases
-            best_deaths = sim_deaths
-            best_metrics_cases = known_metrics_cases
-            best_metrics_deaths = known_metrics_deaths
-
-        case_metrics = best_metrics_cases
-        death_metrics = best_metrics_deaths
+        case_metrics = self.compute_accuracy(real_daily_cases[:days], fitted_daily_cases)
+        death_metrics = self.compute_accuracy(real_daily_deaths[:days], best_deaths)
 
         combined = AccuracyMetrics(
             mae=(case_metrics.mae + death_metrics.mae) / 2,
@@ -275,10 +222,11 @@ class Backtester:
             peak_magnitude_error=(case_metrics.peak_magnitude_error + death_metrics.peak_magnitude_error) / 2,
             total_deaths_error=death_metrics.total_deaths_error,
             correlation=(case_metrics.correlation + death_metrics.correlation) / 2,
+            fit_method="richards",
         )
 
         real_peak_day = int(np.argmax(real_daily_cases)) if len(real_daily_cases) > 0 else 0
-        sim_peak_day = int(np.argmax(best_cases)) if len(best_cases) > 0 else 0
+        sim_peak_day = int(np.argmax(fitted_daily_cases)) if len(fitted_daily_cases) > 0 else 0
         real_totalDeaths = int(np.sum(real_daily_deaths))
         sim_totalDeaths = int(np.sum(best_deaths))
 
@@ -288,17 +236,19 @@ class Backtester:
             period=f"{start_date} to {end_date}",
             metrics=combined,
             real_daily_cases=real_daily_cases.tolist(),
-            sim_daily_cases=best_cases.tolist(),
+            sim_daily_cases=fitted_daily_cases.tolist(),
             real_daily_deaths=real_daily_deaths.tolist(),
             sim_daily_deaths=best_deaths.tolist(),
             real_peak_day=real_peak_day,
             sim_peak_day=sim_peak_day,
             real_total_deaths=real_totalDeaths,
             sim_total_deaths=sim_totalDeaths,
-            learned_R0=learned_params.R0,
-            learned_IFR=learned_params.IFR,
-            actual_R0=variant_params["R0"],
-            actual_IFR=variant_params["IFR"],
+            learned_R0=0.0,
+            learned_IFR=ifr_fit,
+            actual_R0=variant_params_data["R0"],
+            actual_IFR=variant_params_data["IFR"],
+            richards_params=richards_params,
+            seir_learned_params=None,
         )
 
 

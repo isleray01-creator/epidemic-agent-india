@@ -162,7 +162,11 @@ def render_new_simulation_sidebar():
 
 def render_load_saved_sidebar():
     st.sidebar.subheader("Load Saved State")
-    store = get_state_store()
+    try:
+        store = get_state_store()
+    except (ValueError, Exception):
+        st.sidebar.info("State store not configured (missing PICKLE_HMAC_KEY)")
+        return
     saved_files = store.list_states()
 
     if not saved_files:
@@ -512,7 +516,7 @@ def render_backtesting_tab():
             learner = VariantParameterLearner()
             learned = learner.learn_from_wave(
                 df["confirmed"], df["deceased"],
-                population=population, vax_rate=0.3,
+                population=population,
             )
 
         from epidemic_agent.config import VARIANT_PARAMS
