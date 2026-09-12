@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-import math
+import pickle
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -13,6 +14,8 @@ from ..config import INDIA_STATE_CODES, VARIANT_PARAMS, get_state_population
 from .richards_fitter import RichardsFitter, RichardsParams
 
 logger = logging.getLogger(__name__)
+
+API_CACHE_DIR = Path("D:/Agentic_ai/epidemic-agent-india/data/cache/api")
 
 
 @dataclass
@@ -25,7 +28,7 @@ class AccuracyMetrics:
     peak_magnitude_error: float = 0.0
     total_deaths_error: float = 0.0
     correlation: float = 0.0
-    fit_method: str = "richards"
+    fit_method: str = "lognormal"
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -47,6 +50,7 @@ class BacktestResult:
     variant: str
     period: str
     metrics: AccuracyMetrics
+    cv_metrics: dict = field(default_factory=dict)
     real_daily_cases: list[int] = field(default_factory=list)
     sim_daily_cases: list[float] = field(default_factory=list)
     real_daily_deaths: list[int] = field(default_factory=list)
@@ -55,18 +59,19 @@ class BacktestResult:
     sim_peak_day: int = 0
     real_total_deaths: int = 0
     sim_total_deaths: int = 0
-    learned_R0: float = 0.0
     learned_IFR: float = 0.0
-    actual_R0: float = 0.0
     actual_IFR: float = 0.0
     richards_params: RichardsParams = None
-    seir_learned_params: Any = None
 
 
 class Backtester:
     def __init__(self):
         self.base_url = "https://data.incovid19.org"
-        self._cache = {}
+        self._api_cache: dict[str, Any] = {}
+        API_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _api_cache_path(self, state_code: str) -> Path:
+        return API_CACHE_DIR / f"timeseries_{state_code}.pkl"
 
     def fetch_state_timeseries(
         self,
@@ -75,19 +80,34 @@ class Backtester:
         end_date: str,
     ) -> pd.DataFrame:
         state_code = INDIA_STATE_CODES.get(state, state)
-        cache_key = state_code
-        if cache_key not in self._cache:
+        cache_path = self._api_cache_path(state_code)
+
+        if cache_path.exists():
+            try:
+                with open(cache_path, "rb") as f:
+                    raw_data = pickle.load(f)
+                logger.info(f"Loaded {state_code} from disk cache")
+            except Exception:
+                raw_data = None
+        else:
+            raw_data = None
+
+        if raw_data is None:
             url = f"{self.base_url}/v4/min/timeseries-{state_code}.min.json"
             try:
-                r = requests.get(url, timeout=60)
+                r = requests.get(url, timeout=30)
                 r.raise_for_status()
-                self._cache[cache_key] = r.json()
+                raw_data = r.json()
+                try:
+                    with open(cache_path, "wb") as f:
+                        pickle.dump(raw_data, f)
+                except Exception:
+                    pass
             except Exception as e:
                 logger.error(f"Failed to fetch timeseries for {state}: {e}")
                 return pd.DataFrame()
 
-        data = self._cache[cache_key]
-        state_data = data.get(state_code, data)
+        state_data = raw_data.get(state_code, raw_data)
         dates_dict = state_data.get("dates", {})
         records = []
         for date_str, day_data in dates_dict.items():
@@ -156,9 +176,7 @@ class Backtester:
             total_deaths_error = 0.0
 
         return AccuracyMetrics(
-            mae=mae,
-            rmse=rmse,
-            mape=mape,
+            mae=mae, rmse=rmse, mape=mape,
             r_squared=max(r_squared, 0.0),
             peak_timing_error=peak_timing_error,
             peak_magnitude_error=peak_magnitude_error,
@@ -173,9 +191,10 @@ class Backtester:
         start_date: str,
         end_date: str,
         population: int = None,
+        run_cv: bool = True,
     ) -> BacktestResult:
         population = population or get_state_population(state)
-        variant_params = VARIANT_PARAMS.get(variant, VARIANT_PARAMS["wildtype"])
+        variant_params_data = VARIANT_PARAMS.get(variant, VARIANT_PARAMS["wildtype"])
 
         df = self.fetch_state_timeseries(state, start_date, end_date)
         if df.empty or len(df) < 14:
@@ -187,31 +206,20 @@ class Backtester:
 
         real_daily_cases = df["daily_confirmed"].fillna(0).values
         real_daily_deaths = df["daily_deceased"].fillna(0).values
-        real_cumulative = df["confirmed"].values
         days = len(df)
 
         fitter = RichardsFitter()
 
-        richards_params = fitter.fit_cumulative_cases(
-            real_daily_cases, population, maxiter=200,
-        )
-
+        richards_params = fitter.fit_cumulative_cases(real_daily_cases, population, maxiter=80)
         fitted_daily_cases = fitter.predict_daily(richards_params, days)
 
         ifr_fit, lag_fit = fitter.fit_deaths_from_cases(
-            real_daily_cases, real_daily_deaths, population, maxiter=100,
+            real_daily_cases, real_daily_deaths, population, maxiter=50,
         )
-
-        fitted_daily_deaths, fitted_cum_deaths = fitter.predict_deaths_from_cases(
-            real_daily_cases, ifr_fit, lag_fit,
-        )
-
-        best_deaths = fitted_daily_deaths
-
-        variant_params_data = VARIANT_PARAMS.get(variant, VARIANT_PARAMS["wildtype"])
+        fitted_daily_deaths, _ = fitter.predict_deaths_from_cases(real_daily_cases, ifr_fit, lag_fit)
 
         case_metrics = self.compute_accuracy(real_daily_cases[:days], fitted_daily_cases)
-        death_metrics = self.compute_accuracy(real_daily_deaths[:days], best_deaths)
+        death_metrics = self.compute_accuracy(real_daily_deaths[:days], fitted_daily_deaths)
 
         combined = AccuracyMetrics(
             mae=(case_metrics.mae + death_metrics.mae) / 2,
@@ -222,62 +230,51 @@ class Backtester:
             peak_magnitude_error=(case_metrics.peak_magnitude_error + death_metrics.peak_magnitude_error) / 2,
             total_deaths_error=death_metrics.total_deaths_error,
             correlation=(case_metrics.correlation + death_metrics.correlation) / 2,
-            fit_method="richards",
+            fit_method="lognormal",
         )
+
+        cv_metrics = {}
+        if run_cv and days >= 30:
+            cv_metrics = fitter.rolling_window_cv(
+                real_daily_cases, population,
+                train_window=30, horizon=7, maxiter=50,
+            )
 
         real_peak_day = int(np.argmax(real_daily_cases)) if len(real_daily_cases) > 0 else 0
         sim_peak_day = int(np.argmax(fitted_daily_cases)) if len(fitted_daily_cases) > 0 else 0
-        real_totalDeaths = int(np.sum(real_daily_deaths))
-        sim_totalDeaths = int(np.sum(best_deaths))
 
         return BacktestResult(
-            state=state,
-            variant=variant,
-            period=f"{start_date} to {end_date}",
-            metrics=combined,
+            state=state, variant=variant, period=f"{start_date} to {end_date}",
+            metrics=combined, cv_metrics=cv_metrics,
             real_daily_cases=real_daily_cases.tolist(),
             sim_daily_cases=fitted_daily_cases.tolist(),
             real_daily_deaths=real_daily_deaths.tolist(),
-            sim_daily_deaths=best_deaths.tolist(),
-            real_peak_day=real_peak_day,
-            sim_peak_day=sim_peak_day,
-            real_total_deaths=real_totalDeaths,
-            sim_total_deaths=sim_totalDeaths,
-            learned_R0=0.0,
+            sim_daily_deaths=fitted_daily_deaths.tolist(),
+            real_peak_day=real_peak_day, sim_peak_day=sim_peak_day,
+            real_total_deaths=int(np.sum(real_daily_deaths)),
+            sim_total_deaths=int(np.sum(fitted_daily_deaths)),
             learned_IFR=ifr_fit,
-            actual_R0=variant_params_data["R0"],
             actual_IFR=variant_params_data["IFR"],
             richards_params=richards_params,
-            seir_learned_params=None,
         )
 
 
-def run_full_backtest() -> dict[str, Any]:
-    backtester = Backtester()
-    waves = [
-        {
-            "name": "India Delta Wave",
-            "states": ["Maharashtra"],
-            "variant": "delta",
-            "start": "2021-04-01",
-            "end": "2021-06-30",
-        },
-        {
-            "name": "India Omicron Wave",
-            "states": ["Maharashtra"],
-            "variant": "omicron_ba1",
-            "start": "2022-01-01",
-            "end": "2022-03-31",
-        },
-        {
-            "name": "India First Wave",
-            "states": ["Maharashtra"],
-            "variant": "wildtype",
-            "start": "2020-09-01",
-            "end": "2020-12-31",
-        },
-    ]
+WAVES = [
+    {"name": "Maharashtra Delta", "states": ["Maharashtra"], "variant": "delta", "start": "2021-04-01", "end": "2021-06-30"},
+    {"name": "Maharashtra Omicron", "states": ["Maharashtra"], "variant": "omicron_ba1", "start": "2022-01-01", "end": "2022-03-31"},
+    {"name": "Maharashtra First Wave", "states": ["Maharashtra"], "variant": "wildtype", "start": "2020-09-01", "end": "2020-12-31"},
+    {"name": "Delhi Delta", "states": ["Delhi"], "variant": "delta", "start": "2021-04-01", "end": "2021-06-30"},
+    {"name": "Delhi Omicron", "states": ["Delhi"], "variant": "omicron_ba1", "start": "2022-01-01", "end": "2022-03-31"},
+    {"name": "Kerala Delta", "states": ["Kerala"], "variant": "delta", "start": "2021-05-01", "end": "2021-08-31"},
+    {"name": "Tamil Nadu Delta", "states": ["Tamil Nadu"], "variant": "delta", "start": "2021-04-01", "end": "2021-07-31"},
+]
 
+
+def run_full_backtest(waves: list[dict] = None) -> dict[str, Any]:
+    if waves is None:
+        waves = WAVES
+
+    backtester = Backtester()
     all_results = []
     summary = {}
 
@@ -286,46 +283,54 @@ def run_full_backtest() -> dict[str, Any]:
         for state in wave["states"]:
             logger.info(f"Backtesting {state} for {wave['name']}...")
             result = backtester.backtest_state(
-                state=state,
-                variant=wave["variant"],
-                start_date=wave["start"],
-                end_date=wave["end"],
+                state=state, variant=wave["variant"],
+                start_date=wave["start"], end_date=wave["end"],
+                run_cv=True,
             )
             wave_results.append(result)
 
-        avg_mae = np.mean([r.metrics.mae for r in wave_results])
-        avg_rmse = np.mean([r.metrics.rmse for r in wave_results])
         avg_r2 = np.mean([r.metrics.r_squared for r in wave_results])
         avg_corr = np.mean([r.metrics.correlation for r in wave_results])
         avg_mape = np.mean([r.metrics.mape for r in wave_results])
+        avg_cv_r2 = np.mean([r.cv_metrics.get("cv_r2_mean", 0) for r in wave_results if r.cv_metrics])
 
         summary[wave["name"]] = {
             "states_tested": wave["states"],
             "variant": wave["variant"],
             "period": f"{wave['start']} to {wave['end']}",
-            "avg_MAE": round(avg_mae, 2),
-            "avg_RMSE": round(avg_rmse, 2),
-            "avg_R_squared": round(avg_r2, 4),
-            "avg_correlation": round(avg_corr, 4),
-            "avg_MAPE": f"{avg_mape:.1%}",
+            "in_sample_R2": round(avg_r2, 4),
+            "out_of_sample_R2": round(avg_cv_r2, 4),
+            "correlation": round(avg_corr, 4),
+            "MAPE": f"{avg_mape:.1%}",
         }
 
         for r in wave_results:
             all_results.append(r)
 
-    overall_r2 = np.mean([r.metrics.r_squared for r in all_results])
+    in_sample_r2 = np.mean([r.metrics.r_squared for r in all_results])
+    cv_results = [r for r in all_results if r.cv_metrics]
+    out_sample_r2 = np.mean([r.cv_metrics.get("cv_r2_mean", 0) for r in cv_results]) if cv_results else 0.0
     overall_corr = np.mean([r.metrics.correlation for r in all_results])
     overall_mape = np.mean([r.metrics.mape for r in all_results])
 
+    total_real_cases = sum(sum(r.real_daily_cases) for r in all_results)
+    total_sim_cases = sum(sum(r.sim_daily_cases) for r in all_results)
+    total_real_deaths = sum(r.real_total_deaths for r in all_results)
+    total_sim_deaths = sum(r.sim_total_deaths for r in all_results)
+
     summary["overall"] = {
         "total_backtests": len(all_results),
-        "avg_R_squared": round(overall_r2, 4),
-        "avg_correlation": round(overall_corr, 4),
-        "avg_MAPE": f"{overall_mape:.1%}",
+        "in_sample_R_squared": round(in_sample_r2, 4),
+        "out_of_sample_R_squared": round(out_sample_r2, 4),
+        "correlation": round(overall_corr, 4),
+        "MAPE": f"{overall_mape:.1%}",
+        "total_cases_error": f"{abs(total_sim_cases - total_real_cases) / total_real_cases:.1%}" if total_real_cases > 0 else "N/A",
+        "total_deaths_error": f"{abs(total_sim_deaths - total_real_deaths) / total_real_deaths:.1%}" if total_real_deaths > 0 else "N/A",
+        "overfitting_gap": round(in_sample_r2 - out_sample_r2, 4),
         "accuracy_rating": (
-            "Excellent" if overall_r2 > 0.8 else
-            "Good" if overall_r2 > 0.6 else
-            "Moderate" if overall_r2 > 0.4 else
+            "Excellent" if out_sample_r2 > 0.7 else
+            "Good" if out_sample_r2 > 0.5 else
+            "Moderate" if out_sample_r2 > 0.3 else
             "Poor"
         ),
     }
