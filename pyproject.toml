@@ -1,0 +1,65 @@
+[project]
+name = "epidemic-agent"
+version = "0.1.0"
+description = "Epidemic Response Agent for India - Agentic AI with Mesa simulation, real data, and local LLM"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Epidemic Agent Team"}]
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "langchain-community>=0.3.0",
+    "langchain-ollama>=0.1.0",
+    "openai>=1.30.0",
+    "google-generativeai>=0.7.0",
+    "chromadb>=0.5.0",
+    "mesa>=3.0.0",
+    "scipy>=1.13.0",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "requests>=2.32.0",
+    "python-dotenv>=1.0.0",
+    "streamlit>=1.35.0",
+    "plotly>=5.22.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "tqdm>=4.66.0",
+    "structlog>=24.1.0",
+    "pyyaml>=6.0.0",
+]
+optional-dependencies = {dev = ["pytest>=8.2.0", "pytest-asyncio>=0.23.0", "pytest-mock>=3.14.0", "ruff>=0.5.0", "mypy>=1.10.0"]}
+
+[project.scripts]
+epidemic-agent = "epidemic_agent.cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["epidemic_agent*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "T20"]
+ignore = ["S101", "B008", "N806", "N803", "N815", "E741", "T201", "B904", "B007", "F841", "C408", "SIM108"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
