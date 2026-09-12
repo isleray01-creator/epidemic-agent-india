@@ -1,25 +1,27 @@
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import streamlit as st
 
-from epidemic_agent.config import INDIA_STATES, VARIANT_PARAMS, settings
-from epidemic_agent.graph import get_workflow
-from epidemic_agent.persistence import get_state_store
-from epidemic_agent.state import EpidemicState, SimulationConfig
-from epidemic_agent.tools import fetch_epidemic_data
-
+from epidemic_agent.config import INDIA_STATES, VARIANT_PARAMS, get_state_population
 from epidemic_agent.dashboard.components import (
+    METRIC_LABELS,
+    create_animated_choropleth,
     create_animation_controls,
+    create_deaths_cases_dual_axis,
     create_india_choropleth,
     create_intervention_timeline,
     create_metric_selector,
     create_multi_metric_figure,
+    create_rt_heatmap,
     create_state_selector,
 )
 from epidemic_agent.dashboard.utils import create_download_button, display_objective_breakdown, format_number
+from epidemic_agent.graph import get_workflow
+from epidemic_agent.persistence import get_state_store
+from epidemic_agent.state import EpidemicState, SimulationConfig
+from epidemic_agent.tools import fetch_epidemic_data
 
 st.set_page_config(
     page_title="Epidemic Response Agent - India",
@@ -48,17 +50,11 @@ def initialize_session_state():
     if "current_recommendation" not in st.session_state:
         st.session_state.current_recommendation = None
 
-    if "animation_frame" not in st.session_state:
-        st.session_state.animation_frame = 0
-
-    if "animation_playing" not in st.session_state:
-        st.session_state.animation_playing = False
-
 
 def create_initial_state(config: SimulationConfig) -> EpidemicState:
     population = {}
     for state in config.states:
-        population[state] = settings.get_state_population(state)
+        population[state] = get_state_population(state)
 
     total_pop = sum(population.values())
     initial_infected_per_state = {
@@ -225,7 +221,7 @@ def render_welcome():
     st.markdown("""
     Welcome to the **Epidemic Response Agent** for India. This agentic AI system:
 
-    - **Monitors** real-time epidemic data from data.incovid19.org and CoWIN
+    - **Monitors** real-time epidemic data from covid19india.org and CoWIN
     - **Simulates** disease spread using agent-based (Mesa) and compartmental (SEIR) models
     - **Adapts** to variant shocks through dynamic detection and re-planning
     - **Optimizes** interventions using a multi-objective function (deaths, economy, society, healthcare)
@@ -287,25 +283,20 @@ def render_map_tab(state: EpidemicState, results: dict[str, Any]):
 
     with col2:
         metric = create_metric_selector("map")
-        metric_key = [k for k, v in {
-            "daily_cases": "Daily Cases",
-            "daily_deaths": "Daily Deaths",
-            "daily_Rt": "Rt (Reproduction Number)",
-            "cumulative_cases": "Cumulative Cases",
-            "cumulative_deaths": "Cumulative Deaths",
-        }.items() if v == metric][0]
-
+        metric_key = [k for k, v in METRIC_LABELS.items() if v == metric][0]
         selected_state = create_state_selector(state["states"], "map")
 
     with col1:
         if results and metric_key in results:
+            if selected_state == "All":
+                display_states = state["states"]
+            else:
+                display_states = [selected_state]
+
             day_data = {}
-            for s in state["states"]:
+            for s in display_states:
                 values = results[metric_key].get(s, [])
-                if values:
-                    day_data[s] = values[-1]
-                else:
-                    day_data[s] = 0
+                day_data[s] = values[-1] if values else 0
 
             fig = create_india_choropleth(
                 day_data,
@@ -334,7 +325,7 @@ def render_metrics_tab(state: EpidemicState, results: dict[str, Any]):
     metrics = st.multiselect(
         "Metrics",
         ["daily_cases", "daily_deaths", "daily_Rt", "cumulative_cases", "cumulative_deaths"],
-        default=["daily_cases", "daily_deaths", "daily_Rt"],
+        default=["daily_cases", "daily_deaths"],
         key="metrics_list",
     )
 
@@ -342,6 +333,14 @@ def render_metrics_tab(state: EpidemicState, results: dict[str, Any]):
 
     fig = create_multi_metric_figure(results, selected_states, metrics, days)
     st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Reproduction Number (Rt) by State")
+    fig_rt = create_rt_heatmap(results, selected_states, days)
+    st.plotly_chart(fig_rt, use_container_width=True)
+
+    st.subheader("Cases vs Deaths")
+    fig_dc = create_deaths_cases_dual_axis(results, selected_states, days)
+    st.plotly_chart(fig_dc, use_container_width=True)
 
     st.subheader("Objective Breakdown")
     display_objective_breakdown(state["objective_breakdown"])
@@ -370,41 +369,22 @@ def render_animation_tab(state: EpidemicState, results: dict[str, Any]):
         return
 
     metric = create_metric_selector("anim")
-    metric_key = [k for k, v in {
-        "daily_cases": "Daily Cases",
-        "daily_deaths": "Daily Deaths",
-        "daily_Rt": "Rt (Reproduction Number)",
-        "cumulative_cases": "Cumulative Cases",
-        "cumulative_deaths": "Cumulative Deaths",
-    }.items() if v == metric][0]
+    metric_key = [k for k, v in METRIC_LABELS.items() if v == metric][0]
 
-    max_frames = min(
-        len(results.get(metric_key, {}).get(state["states"][0], [])),
+    n_days = min(
+        max(len(v) for v in results.get(metric_key, {}).values()) if results.get(metric_key) else 0,
         100,
-    ) if state["states"] else 0
+    )
 
-    controls = create_animation_controls("anim", max_frames)
+    controls = create_animation_controls("anim", n_days)
 
-    if results and metric_key in results:
-        day_data = {}
-        for s in state["states"]:
-            values = results[metric_key].get(s, [])
-            if controls["frame"] < len(values):
-                day_data[s] = values[controls["frame"]]
-            else:
-                day_data[s] = 0
+    if results and metric_key in results and n_days > 0:
+        fig = create_animated_choropleth(results, state["states"], metric_key, metric)
 
-        fig = create_india_choropleth(
-            day_data,
-            metric_name=metric,
-            title=f"{metric} - Day {controls['frame'] + 1}",
-        )
-        st.plotly_chart(fig, use_container_width=True, key=f"anim_chart_{controls['frame']}")
+        if controls["frame"] < n_days:
+            fig.update_layout(title=f"Day {controls['frame'] + 1} — {metric}")
 
-        if controls["playing"] and controls["frame"] < max_frames - 1:
-            time.sleep(1.0 / controls["speed"])
-            st.session_state.animation_frame = controls["frame"] + 1
-            st.rerun()
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def render_details_tab(state: EpidemicState, results: dict[str, Any], recommendation: dict[str, Any]):
@@ -439,7 +419,7 @@ def render_details_tab(state: EpidemicState, results: dict[str, Any], recommenda
     st.markdown("### Shock Detection")
     shock = state.get("variant_shock", {})
     if shock.get("shock_detected"):
-        st.error(f"⚠️ Variant shock detected! Severity: {shock.get('severity')}")
+        st.error(f"Variant shock detected! Severity: {shock.get('severity')}")
         st.json(shock)
     else:
         st.success("No variant shock detected")
