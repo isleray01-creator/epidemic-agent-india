@@ -57,7 +57,7 @@ def create_state_selector(
         "Select State",
         options,
         index=0,
-        key=f"{key_prefix}_selector",
+        key=f"{key_prefix}_state_selector",
     )
 
 
@@ -75,5 +75,5 @@ def create_metric_selector(
         "Metric",
         list(metrics.values()),
         index=0,
-        key=f"{key_prefix}_selector",
+        key=f"{key_prefix}_metric_selector",
     )
