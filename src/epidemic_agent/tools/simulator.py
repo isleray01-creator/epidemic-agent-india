@@ -32,6 +32,14 @@ def _merge_intervention_params(interventions: list[str], base_params: dict[str, 
         params["mask_reduction"] = 0.3
     if "vaccination_drive" in interventions:
         params["vaccination_rate_multiplier"] = 2.0
+    if "travel_restrictions" in interventions:
+        params["lockdown_reduction"] = max(params.get("lockdown_reduction", 0), 0.2)
+    if "social_distancing" in interventions:
+        params["mask_reduction"] = max(params.get("mask_reduction", 0), 0.15)
+    if "quarantine" in interventions:
+        params["isolation_compliance"] = max(params.get("isolation_compliance", 0), 0.5)
+    if "enhanced_testing" in interventions:
+        params["tracing_efficiency"] = max(params.get("tracing_efficiency", 0), 0.7)
     return params
 
 

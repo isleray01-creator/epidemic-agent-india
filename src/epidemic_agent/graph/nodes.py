@@ -188,11 +188,27 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
     shock = state.get("variant_shock", {})
     if shock.get("shock_detected"):
         logger.warning(f"Variant shock detected! Severity: {shock.get('severity')}")
-        interventions = ["contact_tracing"]
         if shock.get("severity") == "high":
-            interventions.extend(["enhanced_testing", "mask_mandate"])
+            interventions = [
+                "lockdown", "mask_mandate", "travel_restrictions",
+                "quarantine", "enhanced_testing", "contact_tracing",
+                "social_distancing",
+            ]
+        elif shock.get("severity") == "medium":
+            interventions = [
+                "mask_mandate", "travel_restrictions", "quarantine",
+                "enhanced_testing", "contact_tracing", "social_distancing",
+            ]
+        else:
+            interventions = [
+                "contact_tracing", "enhanced_testing", "mask_mandate",
+                "social_distancing",
+            ]
     else:
-        interventions = state["metadata"].get("planned_interventions", ["contact_tracing"])
+        interventions = state["metadata"].get("planned_interventions", [
+            "contact_tracing", "social_distancing", "mask_mandate",
+            "enhanced_testing",
+        ])
 
     intervention_records = []
     for intervention in interventions:

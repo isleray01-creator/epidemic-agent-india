@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy.optimize import differential_evolution
+from scipy.signal import savgol_filter
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +30,84 @@ class RichardsParams:
     Q: float = 0.0
     IFR: float = 0.02
 
+    n_waves: int = 1
+    wave_A: list = None
+    wave_mu: list = None
+    wave_sigma: list = None
+
+    def __post_init__(self):
+        if self.wave_A is None:
+            self.wave_A = []
+        if self.wave_mu is None:
+            self.wave_mu = []
+        if self.wave_sigma is None:
+            self.wave_sigma = []
+
+
+def _detect_waves(daily_cases: np.ndarray, min_prominence_ratio: float = 0.10) -> list[int]:
+    if len(daily_cases) < 10:
+        return [0]
+
+    window = min(21, len(daily_cases) // 3)
+    if window < 7:
+        window = 7
+    if window % 2 == 0:
+        window += 1
+
+    try:
+        smoothed = savgol_filter(daily_cases.astype(float), window, 3)
+    except Exception:
+        smoothed = np.convolve(daily_cases.astype(float), np.ones(7) / 7, mode="same")
+
+    smoothed = np.maximum(smoothed, 0)
+
+    if len(smoothed) < 5:
+        return [0]
+
+    peaks = []
+    for i in range(2, len(smoothed) - 2):
+        if (smoothed[i] > smoothed[i - 1] and smoothed[i] > smoothed[i + 1] and
+                smoothed[i] > smoothed[i - 2] and smoothed[i] > smoothed[i + 2]):
+            peaks.append(i)
+
+    if not peaks:
+        return [0]
+
+    max_val = max(smoothed) if max(smoothed) > 0 else 1
+    min_prominence = max_val * min_prominence_ratio
+
+    significant_peaks = []
+    for p in peaks:
+        left_start = max(0, p - 30)
+        right_end = min(len(smoothed), p + 30)
+        left_min = min(smoothed[left_start:p]) if p > left_start else smoothed[p]
+        right_min = min(smoothed[p:right_end]) if right_end > p else smoothed[p]
+        prominence = smoothed[p] - max(left_min, right_min)
+        if prominence >= min_prominence:
+            significant_peaks.append(p)
+
+    if not significant_peaks:
+        return [0]
+
+    merged_peaks = [significant_peaks[0]]
+    for p in significant_peaks[1:]:
+        if p - merged_peaks[-1] > 30:
+            merged_peaks.append(p)
+        else:
+            if smoothed[p] > smoothed[merged_peaks[-1]]:
+                merged_peaks[-1] = p
+
+    if len(merged_peaks) > 5:
+        peak_heights = [(smoothed[p], i) for i, p in enumerate(merged_peaks)]
+        peak_heights.sort(reverse=True)
+        merged_peaks = [merged_peaks[h[1]] for h in peak_heights[:5]]
+        merged_peaks.sort()
+
+    return merged_peaks if merged_peaks else [0]
+
 
 class RichardsFitter:
-    """Fits log-normal curves to epidemic data with caching and rolling-window CV."""
+    """Fits log-normal curves (single or multi-wave) to epidemic data with caching and rolling-window CV."""
 
     def __init__(self, cache_dir: Path = CACHE_DIR):
         self.cache_dir = cache_dir
@@ -64,6 +140,10 @@ class RichardsFitter:
                     "lognormal_sigma": params.lognormal_sigma,
                     "fit_method": params.fit_method,
                     "name": params.name,
+                    "n_waves": params.n_waves,
+                    "wave_A": params.wave_A,
+                    "wave_mu": params.wave_mu,
+                    "wave_sigma": params.wave_sigma,
                 }, f)
         except Exception:
             pass
@@ -74,25 +154,50 @@ class RichardsFitter:
         log_t = np.log(t_safe)
         return A * np.exp(-((log_t - mu) ** 2) / (2 * sigma ** 2)) / (t_safe * sigma * np.sqrt(2 * np.pi))
 
+    def _multi_wave_daily(self, t: np.ndarray, wave_params: list[tuple]) -> np.ndarray:
+        result = np.zeros_like(t, dtype=float)
+        for A, mu, sigma in wave_params:
+            result += self._lognormal_daily(t, A, mu, sigma)
+        return result
+
     def fit_cumulative_cases(
         self,
         daily_cases: np.ndarray,
         population: int,
-        maxiter: int = 80,
+        maxiter: int = 120,
     ) -> RichardsParams:
-        cache_key = self._cache_key(daily_cases, "_cases_v2")
+        cache_key = self._cache_key(daily_cases, "_cases_v4")
         cached = self._load_cache(cache_key)
         if cached is not None:
             return cached
 
-        cum_cases = np.cumsum(daily_cases)
         days = len(daily_cases)
         t = np.arange(days, dtype=float)
-        peak_day = int(np.argmax(daily_cases))
-        total_cases = cum_cases[-1]
+        total_cases = np.sum(daily_cases)
 
         if total_cases < 1:
             return RichardsParams(K=1, r=0.1, t0=1.0, alpha=1.0, Q=1.0, name="empty")
+
+        wave_peaks = _detect_waves(daily_cases)
+        n_waves = len(wave_peaks)
+
+        params = self._fit_single_wave(daily_cases, t, total_cases, days, maxiter)
+
+        if n_waves > 1 and n_waves <= 4 and days >= 60:
+            multi_params = self._fit_multi_wave(daily_cases, t, total_cases, days, n_waves, wave_peaks, maxiter)
+            if multi_params is not None:
+                single_pred = self.predict_daily(params, days)
+                multi_pred = self.predict_daily(multi_params, days)
+                single_r2 = 1 - np.sum((daily_cases - single_pred) ** 2) / max(np.sum((daily_cases - np.mean(daily_cases)) ** 2), 1)
+                multi_r2 = 1 - np.sum((daily_cases - multi_pred) ** 2) / max(np.sum((daily_cases - np.mean(daily_cases)) ** 2), 1)
+                if multi_r2 > single_r2 + 0.05:
+                    params = multi_params
+
+        self._save_cache(cache_key, params)
+        return params
+
+    def _fit_single_wave(self, daily_cases, t, total_cases, days, maxiter):
+        peak_day = int(np.argmax(daily_cases))
 
         def objective(params):
             A, mu, sigma = params
@@ -102,6 +207,7 @@ class RichardsFitter:
                 pred_daily = self._lognormal_daily(t, A, mu, sigma)
             except (OverflowError, FloatingPointError):
                 return 1e10
+            pred_daily = np.maximum(pred_daily, 0)
             if np.sum(pred_daily) < 1:
                 return 1e10
 
@@ -132,23 +238,106 @@ class RichardsFitter:
         ]
 
         result = differential_evolution(
-            objective, bounds, seed=42, maxiter=maxiter, tol=1e-6,
-            popsize=15, mutation=(0.5, 1.0), recombination=0.7, polish=True,
+            objective, bounds, seed=42, maxiter=max(maxiter, 150), tol=1e-6,
+            popsize=20, mutation=(0.5, 1.0), recombination=0.7, polish=True,
         )
 
         A, mu, sigma = result.x
-        params = RichardsParams(
+        return RichardsParams(
             K=A, r=sigma, t0=mu, alpha=sigma, Q=A,
             name="lognormal_fitted", fit_method="lognormal",
             lognormal_A=A, lognormal_mu=mu, lognormal_sigma=sigma,
+            n_waves=1, wave_A=[A], wave_mu=[mu], wave_sigma=[sigma],
         )
-        self._save_cache(cache_key, params)
-        return params
+
+    def _fit_multi_wave(self, daily_cases, t, total_cases, days, n_waves, wave_peaks, maxiter):
+        try:
+            def objective(params):
+                n_params_per_wave = 3
+                wave_params = []
+                for i in range(n_waves):
+                    idx = i * n_params_per_wave
+                    A = params[idx]
+                    mu = params[idx + 1]
+                    sigma = params[idx + 2]
+                    if A <= 0 or sigma <= 0:
+                        return 1e10
+                    wave_params.append((A, mu, sigma))
+
+                try:
+                    pred_daily = self._multi_wave_daily(t, wave_params)
+                except (OverflowError, FloatingPointError):
+                    return 1e10
+
+                pred_daily = np.maximum(pred_daily, 0)
+                if np.sum(pred_daily) < 1:
+                    return 1e10
+
+                pred_cum = np.cumsum(pred_daily)
+                real_cum = np.cumsum(daily_cases)
+                scale = max(real_cum[-1], 1)
+                cum_err = np.mean(((pred_cum - real_cum) / scale) ** 2)
+
+                daily_scale = max(np.percentile(daily_cases[daily_cases > 0], 50) if np.any(daily_cases > 0) else 1, 1)
+                daily_err = np.mean(((pred_daily - daily_cases) / daily_scale) ** 2)
+
+                peak_real = np.max(daily_cases)
+                peak_pred = np.max(pred_daily)
+                peak_err = ((peak_pred - peak_real) / max(peak_real, 1)) ** 2
+
+                total_scale = max(total_cases, 1)
+                total_err = ((np.sum(pred_daily) - total_cases) / total_scale) ** 2
+
+                return cum_err + 3.0 * daily_err + 2.0 * peak_err + 2.0 * total_err
+
+            bounds = []
+            for i in range(n_waves):
+                peak_idx = wave_peaks[i]
+                if peak_idx >= len(daily_cases):
+                    peak_idx = len(daily_cases) // 2
+                peak_val = daily_cases[peak_idx] if peak_idx < len(daily_cases) else total_cases / days
+                bounds.extend([
+                    (peak_val * 0.05, peak_val * 10),
+                    (max(0, peak_idx - 40), min(days, peak_idx + 40)),
+                    (0.1, 4.0),
+                ])
+
+            result = differential_evolution(
+                objective, bounds, seed=42, maxiter=maxiter, tol=1e-6,
+                popsize=max(20, n_waves * 5), mutation=(0.5, 1.0), recombination=0.7, polish=True,
+            )
+
+            wave_A = []
+            wave_mu = []
+            wave_sigma = []
+            for i in range(n_waves):
+                idx = i * 3
+                wave_A.append(result.x[idx])
+                wave_mu.append(result.x[idx + 1])
+                wave_sigma.append(result.x[idx + 2])
+
+            best_idx = int(np.argmax(wave_A))
+
+            return RichardsParams(
+                K=wave_A[best_idx], r=wave_sigma[best_idx], t0=wave_mu[best_idx],
+                alpha=wave_sigma[best_idx], Q=wave_A[best_idx],
+                name="multi_wave_lognormal", fit_method="lognormal",
+                lognormal_A=wave_A[best_idx], lognormal_mu=wave_mu[best_idx],
+                lognormal_sigma=wave_sigma[best_idx],
+                n_waves=n_waves, wave_A=wave_A, wave_mu=wave_mu, wave_sigma=wave_sigma,
+            )
+        except Exception as e:
+            logger.warning(f"Multi-wave fitting failed: {e}, falling back to single wave")
+            return None
 
     def predict_cumulative(self, params: RichardsParams, days: int) -> np.ndarray:
         t = np.arange(days, dtype=float)
         if params.fit_method == "lognormal":
-            daily = self._lognormal_daily(t, params.lognormal_A, params.lognormal_mu, params.lognormal_sigma)
+            if params.n_waves > 1 and len(params.wave_A) > 1:
+                wave_params = list(zip(params.wave_A, params.wave_mu, params.wave_sigma))
+                daily = self._multi_wave_daily(t, wave_params)
+            else:
+                daily = self._lognormal_daily(t, params.lognormal_A, params.lognormal_mu, params.lognormal_sigma)
             return np.cumsum(np.maximum(daily, 0))
         exponent = -params.r * (t - params.t0)
         exponent = np.clip(exponent, -500, 500)
@@ -157,6 +346,9 @@ class RichardsFitter:
     def predict_daily(self, params: RichardsParams, days: int) -> np.ndarray:
         t = np.arange(days, dtype=float)
         if params.fit_method == "lognormal":
+            if params.n_waves > 1 and len(params.wave_A) > 1:
+                wave_params = list(zip(params.wave_A, params.wave_mu, params.wave_sigma))
+                return np.maximum(self._multi_wave_daily(t, wave_params), 0)
             return np.maximum(self._lognormal_daily(t, params.lognormal_A, params.lognormal_mu, params.lognormal_sigma), 0)
         cum = self.predict_cumulative(params, days)
         return np.maximum(np.diff(np.maximum(cum, 0), prepend=0), 0)
@@ -197,11 +389,6 @@ class RichardsFitter:
         horizon: int = 7,
         maxiter: int = 50,
     ) -> dict[str, float]:
-        """Rolling-window forecast CV using exponential smoothing (not log-normal).
-
-        Log-normal is for curve fitting (needs full wave).
-        Exponential smoothing is for short-term forecasting (uses recent trend).
-        """
         n = len(daily_cases)
         if n < train_window + horizon:
             return {"cv_r2_mean": 0.0, "cv_r2_std": 0.0, "cv_corr_mean": 0.0, "cv_mape_mean": 0.0, "n_folds": 0}
@@ -210,7 +397,7 @@ class RichardsFitter:
         all_corr = []
         all_mape = []
 
-        step = horizon
+        step = max(horizon, 14)
         for start in range(0, n - train_window - horizon + 1, step):
             train_data = daily_cases[start:start + train_window].astype(float)
             test_data = daily_cases[start + train_window:start + train_window + horizon].astype(float)
@@ -218,7 +405,18 @@ class RichardsFitter:
             if np.sum(train_data) < 1 or np.sum(test_data) < 1:
                 continue
 
-            smoothed = np.convolve(train_data, np.ones(7) / 7, mode="same")
+            window = min(7, len(train_data) // 2)
+            if window < 3:
+                window = 3
+            if window % 2 == 0:
+                window += 1
+
+            try:
+                smoothed = savgol_filter(train_data, window, min(3, window - 1))
+            except Exception:
+                smoothed = np.convolve(train_data, np.ones(7) / 7, mode="same")
+
+            smoothed = np.maximum(smoothed, 0)
 
             if len(smoothed) >= 14:
                 recent = smoothed[-14:]
@@ -241,8 +439,8 @@ class RichardsFitter:
             mask = r > 0
             mape = float(np.mean(np.abs((r[mask] - s[mask]) / r[mask]))) if mask.any() else 0.0
 
-            all_r2.append(max(r2, 0.0))
-            all_corr.append(max(corr, 0.0))
+            all_r2.append(r2)
+            all_corr.append(corr)
             all_mape.append(mape)
 
         return {

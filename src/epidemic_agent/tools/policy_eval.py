@@ -124,6 +124,9 @@ def evaluate_policy(
         "mask_mandate": _eval_mask_mandate,
         "vaccination_drive": _eval_vaccination,
         "enhanced_testing": _eval_enhanced_testing,
+        "travel_restrictions": _eval_travel_restrictions,
+        "social_distancing": _eval_social_distancing,
+        "quarantine": _eval_quarantine,
     }
     evaluator = evaluators.get(policy)
     if not evaluator:
@@ -345,4 +348,149 @@ def _eval_enhanced_testing(state, current_state, variant, projection_days):
         projected_peak_cases=int_result.peak_cases.get(state, 0),
         Rt_reduction=max(base_Rt - int_Rt, 0),
         cost_inr=cost, cost_per_death_averted=cost_per_death, confidence=0.60,
+    ))}
+
+
+def _eval_travel_restrictions(state, current_state, variant, projection_days):
+    population = current_state.get("population", {}).get(state) or get_state_population(state)
+    current_cases = current_state.get("infected", {}).get(state, 100)
+    variant_params = get_variant_params(variant)
+
+    restriction_level = 0.70
+    external_infection_rate = 0.15
+
+    effective_R0 = variant_params["R0"] * (1 - external_infection_rate * restriction_level)
+
+    base_params = {
+        "R0": variant_params["R0"], "IFR": variant_params["IFR"],
+        "immune_escape": variant_params["immune_escape"],
+        "serial_interval": variant_params["serial_interval"],
+        "incubation_period": INCUBATION_PERIOD, "infectious_period": INFECTIOUS_PERIOD,
+        "population": population, "initial_infected": current_cases,
+        "days": projection_days, "states": [state],
+    }
+    travel_params = base_params.copy()
+    travel_params["R0"] = effective_R0
+
+    try:
+        base_result = run_seir_simulation(**base_params)
+        int_result = run_seir_simulation(**travel_params)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    base_deaths = base_result.total_deaths.get(state, 0)
+    int_deaths = int_result.total_deaths.get(state, 0)
+    deaths_averted = max(base_deaths - int_deaths, 0)
+
+    cost = population * 100 * projection_days / 30
+    cost_per_death = cost / max(deaths_averted, 1)
+
+    base_Rt = base_result.daily_Rt.get(state, [1.0])[-1]
+    int_Rt = int_result.daily_Rt.get(state, [1.0])[-1]
+
+    return {"success": True, "evaluation": asdict(PolicyEvaluation(
+        policy="travel_restrictions", state=state,
+        projected_cases=int_result.cumulative_cases.get(state, [0])[-1],
+        projected_deaths=int_deaths,
+        projected_peak_day=int_result.peak_day.get(state, 0),
+        projected_peak_cases=int_result.peak_cases.get(state, 0),
+        Rt_reduction=max(base_Rt - int_Rt, 0),
+        cost_inr=cost, cost_per_death_averted=cost_per_death, confidence=0.55,
+    ))}
+
+
+def _eval_social_distancing(state, current_state, variant, projection_days):
+    population = current_state.get("population", {}).get(state) or get_state_population(state)
+    current_cases = current_state.get("infected", {}).get(state, 100)
+    variant_params = get_variant_params(variant)
+
+    compliance = 0.70
+    contact_reduction = 0.45
+
+    effective_R0 = variant_params["R0"] * (1 - contact_reduction * compliance)
+
+    base_params = {
+        "R0": variant_params["R0"], "IFR": variant_params["IFR"],
+        "immune_escape": variant_params["immune_escape"],
+        "serial_interval": variant_params["serial_interval"],
+        "incubation_period": INCUBATION_PERIOD, "infectious_period": INFECTIOUS_PERIOD,
+        "population": population, "initial_infected": current_cases,
+        "days": projection_days, "states": [state],
+    }
+    distancing_params = base_params.copy()
+    distancing_params["R0"] = effective_R0
+
+    try:
+        base_result = run_seir_simulation(**base_params)
+        int_result = run_seir_simulation(**distancing_params)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    base_deaths = base_result.total_deaths.get(state, 0)
+    int_deaths = int_result.total_deaths.get(state, 0)
+    deaths_averted = max(base_deaths - int_deaths, 0)
+
+    cost = population * 30 * projection_days / 30
+    cost_per_death = cost / max(deaths_averted, 1)
+
+    base_Rt = base_result.daily_Rt.get(state, [1.0])[-1]
+    int_Rt = int_result.daily_Rt.get(state, [1.0])[-1]
+
+    return {"success": True, "evaluation": asdict(PolicyEvaluation(
+        policy="social_distancing", state=state,
+        projected_cases=int_result.cumulative_cases.get(state, [0])[-1],
+        projected_deaths=int_deaths,
+        projected_peak_day=int_result.peak_day.get(state, 0),
+        projected_peak_cases=int_result.peak_cases.get(state, 0),
+        Rt_reduction=max(base_Rt - int_Rt, 0),
+        cost_inr=cost, cost_per_death_averted=cost_per_death, confidence=0.60,
+    ))}
+
+
+def _eval_quarantine(state, current_state, variant, projection_days):
+    population = current_state.get("population", {}).get(state) or get_state_population(state)
+    current_cases = current_state.get("infected", {}).get(state, 100)
+    variant_params = get_variant_params(variant)
+
+    quarantine_rate = 0.60
+    compliance = 0.80
+    household_isolation = 0.70
+
+    effective_R0 = variant_params["R0"] * (1 - quarantine_rate * compliance * household_isolation)
+
+    base_params = {
+        "R0": variant_params["R0"], "IFR": variant_params["IFR"],
+        "immune_escape": variant_params["immune_escape"],
+        "serial_interval": variant_params["serial_interval"],
+        "incubation_period": INCUBATION_PERIOD, "infectious_period": INFECTIOUS_PERIOD,
+        "population": population, "initial_infected": current_cases,
+        "days": projection_days, "states": [state],
+    }
+    quarantine_params = base_params.copy()
+    quarantine_params["R0"] = effective_R0
+
+    try:
+        base_result = run_seir_simulation(**base_params)
+        int_result = run_seir_simulation(**quarantine_params)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    base_deaths = base_result.total_deaths.get(state, 0)
+    int_deaths = int_result.total_deaths.get(state, 0)
+    deaths_averted = max(base_deaths - int_deaths, 0)
+
+    cost = population * 80 * projection_days / 30
+    cost_per_death = cost / max(deaths_averted, 1)
+
+    base_Rt = base_result.daily_Rt.get(state, [1.0])[-1]
+    int_Rt = int_result.daily_Rt.get(state, [1.0])[-1]
+
+    return {"success": True, "evaluation": asdict(PolicyEvaluation(
+        policy="quarantine", state=state,
+        projected_cases=int_result.cumulative_cases.get(state, [0])[-1],
+        projected_deaths=int_deaths,
+        projected_peak_day=int_result.peak_day.get(state, 0),
+        projected_peak_cases=int_result.peak_cases.get(state, 0),
+        Rt_reduction=max(base_Rt - int_Rt, 0),
+        cost_inr=cost, cost_per_death_averted=cost_per_death, confidence=0.70,
     ))}
