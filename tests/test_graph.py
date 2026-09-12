@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from epidemic_agent.graph import get_workflow
+from epidemic_agent.graph import nodes as _nodes
 from epidemic_agent.state import EpidemicState
 
 
@@ -38,12 +39,12 @@ class TestWorkflow:
     @patch("epidemic_agent.graph.nodes.fetch_demographics")
     @patch("epidemic_agent.graph.nodes.simulate_spread")
     @patch("epidemic_agent.graph.nodes.detect_variant_shock")
-    @patch("epidemic_agent.graph.nodes.evaluate_contact_tracing")
+    @patch("epidemic_agent.graph.nodes.evaluate_policy")
     @patch("epidemic_agent.graph.nodes.calculate_objective")
     def test_workflow_runs(
         self,
         mock_obj,
-        mock_eval,
+        mock_policy,
         mock_shock,
         mock_sim,
         mock_demo,
@@ -75,7 +76,7 @@ class TestWorkflow:
             "recommended_action": "continue",
             "confidence": 1.0,
         }
-        mock_eval.invoke.return_value = {
+        mock_policy.invoke.return_value = {
             "success": True,
             "evaluation": {
                 "projected_cases": 100,

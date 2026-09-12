@@ -3,11 +3,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import google.generativeai as genai
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage
-from langchain_ollama import ChatOllama
-
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -15,13 +10,14 @@ logger = logging.getLogger(__name__)
 
 class LLMClient:
     def __init__(self):
-        self._primary: BaseChatModel | None = None
-        self._fallback: BaseChatModel | None = None
+        self._primary = None
+        self._fallback = None
         self._gemini_model = None
         self._initialize()
 
     def _initialize(self):
         try:
+            from langchain_ollama import ChatOllama
             self._primary = ChatOllama(
                 base_url=settings.ollama_base_url,
                 model=settings.ollama_model,
@@ -29,24 +25,29 @@ class LLMClient:
                 num_predict=2048,
             )
             logger.info(f"Initialized Ollama: {settings.ollama_model}")
+        except ImportError:
+            logger.warning("langchain_ollama not installed, Ollama disabled")
         except Exception as e:
             logger.warning(f"Failed to initialize Ollama: {e}")
 
         if settings.gemini_api_key:
             try:
+                import google.generativeai as genai
                 genai.configure(api_key=settings.gemini_api_key)
                 self._gemini_model = genai.GenerativeModel("gemini-1.5-flash")
                 logger.info("Initialized Gemini fallback")
+            except ImportError:
+                logger.warning("google-generativeai not installed, Gemini disabled")
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini: {e}")
 
     @property
-    def primary(self) -> BaseChatModel:
+    def primary(self):
         if self._primary is None:
             raise RuntimeError("No primary LLM available (Ollama not running)")
         return self._primary
 
-    def invoke(self, messages: list[BaseMessage]) -> str:
+    def invoke(self, messages: list) -> str:
         try:
             response = self._primary.invoke(messages)
             return response.content
@@ -54,7 +55,7 @@ class LLMClient:
             logger.warning(f"Primary LLM failed: {e}, trying fallback")
             return self._fallback_invoke(messages)
 
-    def _fallback_invoke(self, messages: list[BaseMessage]) -> str:
+    def _fallback_invoke(self, messages: list) -> str:
         if self._gemini_model:
             try:
                 prompt = "\n".join([f"{m.type}: {m.content}" for m in messages])
@@ -65,7 +66,7 @@ class LLMClient:
 
         raise RuntimeError("All LLM backends failed")
 
-    def bind_tools(self, tools: list[Any]) -> BaseChatModel:
+    def bind_tools(self, tools: list[Any]) -> Any:
         if hasattr(self._primary, "bind_tools"):
             return self._primary.bind_tools(tools)
         return self._primary

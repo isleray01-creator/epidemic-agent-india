@@ -6,9 +6,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import chromadb
-from chromadb.config import Settings as ChromaSettings
-
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -18,6 +15,14 @@ class ChromaMemoryStore:
     def __init__(self, persist_dir: Path | None = None):
         self.persist_dir = persist_dir or settings.chroma_db_dir
         self.persist_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            import chromadb
+            from chromadb.config import Settings as ChromaSettings
+        except ImportError:
+            raise ImportError(
+                "chromadb is required for memory store. Install with: pip install chromadb"
+            )
 
         self.client = chromadb.PersistentClient(
             path=str(self.persist_dir),
@@ -123,11 +128,32 @@ class ChromaMemoryStore:
         )
 
 
-_memory_store: ChromaMemoryStore | None = None
+_memory_store = None
 
 
-def get_memory_store() -> ChromaMemoryStore:
+def get_memory_store():
     global _memory_store
     if _memory_store is None:
-        _memory_store = ChromaMemoryStore()
+        try:
+            _memory_store = ChromaMemoryStore()
+        except ImportError:
+            _memory_store = _NullMemoryStore()
     return _memory_store
+
+
+class _NullMemoryStore:
+    """Fallback when chromadb is not installed."""
+    def add_decision(self, **kwargs):
+        pass
+
+    def query_similar(self, **kwargs):
+        return []
+
+    def get_recent_decisions(self, **kwargs):
+        return []
+
+    def update_outcome(self, **kwargs):
+        pass
+
+    def clear(self):
+        pass

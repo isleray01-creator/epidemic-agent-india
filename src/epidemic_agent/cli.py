@@ -214,11 +214,15 @@ def manage_state(args: argparse.Namespace) -> int:
 
 
 def launch_dashboard(args: argparse.Namespace) -> int:
+    import os
     import subprocess
     dashboard_path = Path(__file__).parent / "dashboard" / "streamlit_app.py"
+    src_dir = str(Path(__file__).parent.parent)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = src_dir + os.pathsep + env.get("PYTHONPATH", "")
     cmd = ["streamlit", "run", str(dashboard_path), "--server.port", str(args.port)]
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, env=env)
     except subprocess.CalledProcessError as e:
         print(f"Dashboard failed: {e}")
         return 1

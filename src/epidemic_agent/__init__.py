@@ -4,7 +4,6 @@ __version__ = "0.1.0"
 __author__ = "Epidemic Agent Team"
 
 from .config import INDIA_STATES, OBJECTIVE_WEIGHTS, settings
-from .graph import EpidemicWorkflow, get_workflow
 from .state import EpidemicState, SimulationConfig
 
 __all__ = [
@@ -16,3 +15,14 @@ __all__ = [
     "get_workflow",
     "EpidemicWorkflow",
 ]
+
+
+def get_workflow():
+    from .graph import get_workflow as _get_workflow
+    return _get_workflow()
+
+
+class EpidemicWorkflow:
+    def __new__(cls, *args, **kwargs):
+        from .graph import EpidemicWorkflow as _EW
+        return _EW(*args, **kwargs)

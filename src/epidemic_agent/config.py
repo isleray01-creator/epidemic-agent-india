@@ -21,7 +21,7 @@ class Settings(BaseSettings):
         default="", description="HMAC key for trusted pickle verification"
     )
 
-    covid19india_api: str = "https://api.covid19india.org"
+    covid19india_api: str = "https://data.incovid19.org"
     cowin_api: str = "https://cdn-api.co-vin.in/api"
 
     data_dir: Path = Path("data")

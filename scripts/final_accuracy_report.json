@@ -1,0 +1,173 @@
+{
+  "backtest_summary": {
+    "India Delta Wave": {
+      "states_tested": [
+        "Maharashtra"
+      ],
+      "variant": "delta",
+      "period": "2021-04-01 to 2021-06-30",
+      "avg_MAE": 0.27,
+      "avg_RMSE": 0.35,
+      "avg_R_squared": 0.0187,
+      "avg_correlation": 0.3928,
+      "avg_MAPE": "91.6%"
+    },
+    "India Omicron Wave": {
+      "states_tested": [
+        "Maharashtra"
+      ],
+      "variant": "omicron_ba1",
+      "period": "2022-01-01 to 2022-03-31",
+      "avg_MAE": 0.17,
+      "avg_RMSE": 0.28,
+      "avg_R_squared": 0.4002,
+      "avg_correlation": 0.4495,
+      "avg_MAPE": "1604.2%"
+    },
+    "India First Wave": {
+      "states_tested": [
+        "Maharashtra"
+      ],
+      "variant": "wildtype",
+      "period": "2020-09-01 to 2020-12-31",
+      "avg_MAE": 0.52,
+      "avg_RMSE": 0.57,
+      "avg_R_squared": 0.0,
+      "avg_correlation": 0.0,
+      "avg_MAPE": "219.1%"
+    },
+    "overall": {
+      "total_backtests": 3,
+      "avg_R_squared": 0.1396,
+      "avg_correlation": 0.2808,
+      "avg_MAPE": "638.3%",
+      "accuracy_rating": "Poor"
+    }
+  },
+  "accuracy_metrics": {
+    "R_squared": 0.1396,
+    "correlation": 0.2808,
+    "rating": "Poor"
+  },
+  "sensitivity": {
+    "delta": {
+      "parameter_importance": {
+        "R0": 1.0,
+        "IFR": 0.1241,
+        "serial_interval": 0.0,
+        "incubation_period": 0.938,
+        "infectious_period": 0.9642
+      },
+      "most_important": "R0",
+      "details": [
+        {
+          "parameter": "R0",
+          "base_value": 5.0,
+          "elasticity": 8.0619,
+          "rank_correlation": 0.937
+        },
+        {
+          "parameter": "IFR",
+          "base_value": 0.015,
+          "elasticity": 1.0003,
+          "rank_correlation": 1.0
+        },
+        {
+          "parameter": "serial_interval",
+          "base_value": 4.5,
+          "elasticity": 0.0,
+          "rank_correlation": NaN
+        },
+        {
+          "parameter": "incubation_period",
+          "base_value": 5.2,
+          "elasticity": -7.5621,
+          "rank_correlation": -0.839
+        },
+        {
+          "parameter": "infectious_period",
+          "base_value": 7.0,
+          "elasticity": -7.7731,
+          "rank_correlation": -0.8539
+        }
+      ]
+    },
+    "omicron": {
+      "parameter_importance": {
+        "R0": 0.7522,
+        "IFR": 0.3932,
+        "serial_interval": 0.0,
+        "incubation_period": 0.8416,
+        "infectious_period": 1.0
+      },
+      "most_important": "infectious_period",
+      "details": [
+        {
+          "parameter": "R0",
+          "base_value": 7.0,
+          "elasticity": 1.9154,
+          "rank_correlation": 0.937
+        },
+        {
+          "parameter": "IFR",
+          "base_value": 0.003,
+          "elasticity": 1.0012,
+          "rank_correlation": 1.0
+        },
+        {
+          "parameter": "serial_interval",
+          "base_value": 3.5,
+          "elasticity": 0.0,
+          "rank_correlation": NaN
+        },
+        {
+          "parameter": "incubation_period",
+          "base_value": 5.2,
+          "elasticity": -2.1433,
+          "rank_correlation": -0.991
+        },
+        {
+          "parameter": "infectious_period",
+          "base_value": 7.0,
+          "elasticity": -2.5466,
+          "rank_correlation": -0.9903
+        }
+      ]
+    }
+  },
+  "uncertainty": {
+    "wildtype": {
+      "mean_deaths": 10802.0,
+      "std_deaths": 22983.0,
+      "95%_CI_deaths": "[85, 71,181]",
+      "mean_peak_cases": 158916.0,
+      "std_peak_cases": 363786.0,
+      "mean_peak_day": 90.0,
+      "std_peak_day": 0.0,
+      "confidence_score": 0.0,
+      "n_simulations": 50
+    },
+    "delta": {
+      "mean_deaths": 2077535.0,
+      "std_deaths": 1027968.0,
+      "95%_CI_deaths": "[217,489, 3,760,618]",
+      "mean_peak_cases": 4329131.0,
+      "std_peak_cases": 1014155.0,
+      "mean_peak_day": 77.9,
+      "std_peak_day": 9.8,
+      "confidence_score": 0.505,
+      "n_simulations": 50
+    },
+    "omicron_ba1": {
+      "mean_deaths": 599516.0,
+      "std_deaths": 172638.0,
+      "95%_CI_deaths": "[318,331, 913,617]",
+      "mean_peak_cases": 5384175.0,
+      "std_peak_cases": 422372.0,
+      "mean_peak_day": 61.1,
+      "std_peak_day": 8.4,
+      "confidence_score": 0.712,
+      "n_simulations": 50
+    }
+  }
+}

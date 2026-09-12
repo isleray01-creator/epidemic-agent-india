@@ -11,7 +11,7 @@ from epidemic_agent.persistence import get_state_store
 from epidemic_agent.state import EpidemicState, SimulationConfig
 from epidemic_agent.tools import fetch_epidemic_data
 
-from .components import (
+from epidemic_agent.dashboard.components import (
     create_animation_controls,
     create_india_choropleth,
     create_intervention_timeline,
@@ -19,7 +19,7 @@ from .components import (
     create_multi_metric_figure,
     create_state_selector,
 )
-from .utils import create_download_button, display_objective_breakdown, format_number
+from epidemic_agent.dashboard.utils import create_download_button, display_objective_breakdown, format_number
 
 st.set_page_config(
     page_title="Epidemic Response Agent - India",
@@ -225,7 +225,7 @@ def render_welcome():
     st.markdown("""
     Welcome to the **Epidemic Response Agent** for India. This agentic AI system:
 
-    - **Monitors** real-time epidemic data from covid19india.org and CoWIN
+    - **Monitors** real-time epidemic data from data.incovid19.org and CoWIN
     - **Simulates** disease spread using agent-based (Mesa) and compartmental (SEIR) models
     - **Adapts** to variant shocks through dynamic detection and re-planning
     - **Optimizes** interventions using a multi-objective function (deaths, economy, society, healthcare)

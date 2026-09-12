@@ -29,34 +29,43 @@ class IndiaDataFetcher:
         url = f"{self.base_url}/v4/min/timeseries.min.json"
 
         try:
-            response = requests.get(url, timeout=5)
+            response = requests.get(url, timeout=60)
             response.raise_for_status()
             data = response.json()
+        except requests.exceptions.Timeout:
+            logger.warning(f"API timeout for {state}, using cached data")
+            return self._load_cached(state)
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"API connection failed for {state}, using cached data")
+            return self._load_cached(state)
         except Exception as e:
             logger.warning(f"API unavailable for {state}: {e}")
-            return pd.DataFrame()
+            return self._load_cached(state)
 
         if state_code not in data:
             logger.warning(f"No data for state {state} ({state_code})")
             return pd.DataFrame()
 
         state_data = data[state_code]
+        # API structure: {"dates": {"2020-03-09": {...}, ...}}
+        dates_dict = state_data.get("dates", state_data)
         dates = sorted(
-            [k for k in state_data if len(k) == 10 and k[4] == "-"],
+            [k for k in dates_dict if len(k) == 10 and k[4] == "-"],
             reverse=True,
         )[:days_back]
 
         records = []
         for date_str in dates:
-            day_data = state_data[date_str].get("total", {})
-            delta = state_data[date_str].get("delta", {})
+            day_data = dates_dict[date_str]
+            total = day_data.get("total", {})
+            delta = day_data.get("delta", {})
             records.append({
                 "date": pd.to_datetime(date_str),
                 "state": state,
-                "confirmed": day_data.get("confirmed", 0),
-                "deceased": day_data.get("deceased", 0),
-                "recovered": day_data.get("recovered", 0),
-                "tested": day_data.get("tested", 0),
+                "confirmed": total.get("confirmed", 0),
+                "deceased": total.get("deceased", 0),
+                "recovered": total.get("recovered", 0),
+                "tested": total.get("tested", 0),
                 "daily_confirmed": delta.get("confirmed", 0),
                 "daily_deceased": delta.get("deceased", 0),
                 "daily_recovered": delta.get("recovered", 0),
@@ -217,7 +226,7 @@ def _generate_synthetic_data(states: list[str], days_back: int) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-@register_tool(description="Fetch real-time epidemic data for Indian states from covid19india.org")
+@register_tool(description="Fetch real-time epidemic data for Indian states from data.incovid19.org")
 def fetch_epidemic_data(
     states: list[str],
     days_back: int = 90,

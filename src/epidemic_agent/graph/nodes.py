@@ -13,18 +13,23 @@ from ..config import (
     SIMULATION_DAYS_PER_STEP,
 )
 from ..llm import get_llm_client
-from ..memory import get_memory_store
 from ..state import EpidemicState, VariantShockInfo
 from ..tools import (
     calculate_objective,
     detect_variant_shock,
     evaluate_contact_tracing,
+    evaluate_policy,
     fetch_demographics,
     fetch_epidemic_data,
     simulate_spread,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_memory():
+    from ..memory import get_memory_store
+    return get_memory_store()
 
 
 def _to_python(obj):
@@ -46,8 +51,14 @@ def _clean_state(state: EpidemicState) -> EpidemicState:
         state[key] = _to_python(state[key])
     return state
 
-llm_client = get_llm_client()
-memory = get_memory_store()
+
+_llm_client = None
+
+def _get_llm():
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = get_llm_client()
+    return _llm_client
 
 
 def analyze_situation(state: EpidemicState) -> EpidemicState:
@@ -58,24 +69,63 @@ def analyze_situation(state: EpidemicState) -> EpidemicState:
 
     data_result = fetch_epidemic_data.invoke({
         "states": states,
-        "days_back": 14,
+        "days_back": 90,
         "metrics": ["cases", "deaths", "tests", "vaccination"],
     })
 
     demographics = fetch_demographics.invoke({"states": states})
 
+    epidemic_data = data_result.get("data", [])
+
+    learned_params = {}
+    if epidemic_data:
+        try:
+            import pandas as pd
+            from ..simulation.variant import VariantParameterLearner
+
+            df = pd.DataFrame(epidemic_data)
+            learner = VariantParameterLearner()
+
+            for s in states:
+                state_df = df[df["state"] == s].sort_values("date")
+                if len(state_df) < 14:
+                    continue
+
+                cases = state_df["confirmed"].fillna(0)
+                deaths = state_df["deceased"].fillna(0)
+                vaccination = state_df.get("tested")
+
+                params = learner.learn_from_wave(
+                    cases=cases,
+                    deaths=deaths,
+                    vaccination=vaccination,
+                    population=state["population"].get(s, 1_000_000),
+                )
+                matched = learner.match_known_variant(params)
+                learned_params[s] = {
+                    "R0": params.R0,
+                    "IFR": params.IFR,
+                    "immune_escape": params.immune_escape,
+                    "serial_interval": params.serial_interval,
+                    "matched_variant": matched,
+                }
+                logger.info(f"Learned params for {s}: R0={params.R0:.2f}, matched={matched}")
+        except Exception as e:
+            logger.warning(f"Variant learning failed: {e}")
+
     situation = {
         "day": current_day,
         "states": states,
-        "epidemic_data": data_result.get("data", []),
+        "epidemic_data": epidemic_data,
         "demographics": demographics.get("demographics", {}),
         "current_infected": state["infected"],
         "current_Rt": state["Rt_estimates"],
         "active_variants": state["active_variants"],
         "healthcare_capacity": state["healthcare_capacity"],
+        "learned_params": learned_params,
     }
 
-    similar = memory.query_similar(
+    similar = _get_memory().query_similar(
         situation_summary=f"Day {current_day}: {sum(state['infected'].values())} cases across {len(states)} states",
         n_results=3,
     )
@@ -140,37 +190,35 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
         logger.warning(f"Variant shock detected! Severity: {shock.get('severity')}")
         interventions = ["contact_tracing"]
         if shock.get("severity") == "high":
-            interventions.append("enhanced_testing")
+            interventions.extend(["enhanced_testing", "mask_mandate"])
     else:
         interventions = state["metadata"].get("planned_interventions", ["contact_tracing"])
 
     intervention_records = []
     for intervention in interventions:
-        if intervention == "contact_tracing":
-            for s in state["states"]:
-                eval_result = evaluate_contact_tracing.invoke({
-                    "state": s,
-                    "current_cases": state["infected"].get(s, 0),
-                    "current_Rt": state["Rt_estimates"].get(s, 1.0),
-                    "population": state["population"].get(s),
-                    "tracing_efficiency": CONTACT_TRACING_PARAMS["tracing_efficiency"],
-                    "isolation_compliance": CONTACT_TRACING_PARAMS["isolation_compliance"],
-                    "delay_days": CONTACT_TRACING_PARAMS["delay_days"],
-                    "variant": state["active_variants"].get(s, "wildtype"),
-                    "projection_days": SIMULATION_DAYS_PER_STEP,
-                })
+        for s in state["states"]:
+            eval_result = evaluate_policy.invoke({
+                "policy": intervention,
+                "state": s,
+                "current_state": {
+                    "infected": state["infected"],
+                    "Rt_estimates": state["Rt_estimates"],
+                    "population": state["population"],
+                },
+                "variant": state["active_variants"].get(s, "wildtype"),
+                "projection_days": SIMULATION_DAYS_PER_STEP,
+            })
 
-                if eval_result.get("success"):
-                    intervention_records.append({
-                        "day": state["current_day"],
-                        "intervention_type": intervention,
-                        "params": CONTACT_TRACING_PARAMS,
-                        "cost": eval_result["evaluation"]["cost_inr"],
-                        "projected_effect": {
-                            "deaths_averted": eval_result["evaluation"]["projected_deaths"],
-                            "Rt_reduction": eval_result["evaluation"]["Rt_reduction"],
-                        },
-                    })
+            if eval_result.get("success"):
+                intervention_records.append({
+                    "day": state["current_day"],
+                    "intervention_type": intervention,
+                    "cost": eval_result["evaluation"]["cost_inr"],
+                    "projected_effect": {
+                        "deaths_averted": eval_result["evaluation"]["projected_deaths"],
+                        "Rt_reduction": eval_result["evaluation"]["Rt_reduction"],
+                    },
+                })
 
     state["current_policies"] = dict.fromkeys(state["states"], interventions)
     state["intervention_history"].extend(intervention_records)
@@ -299,7 +347,7 @@ def finalize_recommendation(state: EpidemicState) -> EpidemicState:
     state["metadata"]["final_recommendation"] = recommendation
     state["metadata"]["run_complete"] = True
 
-    memory.add_decision(
+    _get_memory().add_decision(
         decision_id=f"decision_{state['current_day']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
         day=state["current_day"],
         state=",".join(state["states"]),

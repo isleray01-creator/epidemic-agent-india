@@ -1,0 +1,106 @@
+{
+  "summary": {
+    "India Delta Wave": {
+      "states_tested": [
+        "Maharashtra"
+      ],
+      "variant": "delta",
+      "period": "2021-04-01 to 2021-06-30",
+      "avg_MAE": 0.27,
+      "avg_RMSE": 0.35,
+      "avg_R_squared": 0.0187,
+      "avg_correlation": 0.3928,
+      "avg_MAPE": "91.6%"
+    },
+    "India Omicron Wave": {
+      "states_tested": [
+        "Maharashtra"
+      ],
+      "variant": "omicron_ba1",
+      "period": "2022-01-01 to 2022-03-31",
+      "avg_MAE": 0.17,
+      "avg_RMSE": 0.28,
+      "avg_R_squared": 0.4002,
+      "avg_correlation": 0.4495,
+      "avg_MAPE": "1604.2%"
+    },
+    "India First Wave": {
+      "states_tested": [
+        "Maharashtra"
+      ],
+      "variant": "wildtype",
+      "period": "2020-09-01 to 2020-12-31",
+      "avg_MAE": 0.52,
+      "avg_RMSE": 0.57,
+      "avg_R_squared": 0.0,
+      "avg_correlation": 0.0,
+      "avg_MAPE": "219.1%"
+    },
+    "overall": {
+      "total_backtests": 3,
+      "avg_R_squared": 0.1396,
+      "avg_correlation": 0.2808,
+      "avg_MAPE": "638.3%",
+      "accuracy_rating": "Poor"
+    }
+  },
+  "per_state": [
+    {
+      "state": "Maharashtra",
+      "variant": "delta",
+      "period": "2021-04-01 to 2021-06-30",
+      "metrics": {
+        "MAE": 0.27,
+        "RMSE": 0.35,
+        "MAPE": "91.6%",
+        "R_squared": 0.0187,
+        "correlation": 0.3928,
+        "peak_timing_error_days": 9,
+        "peak_magnitude_error_pct": "5302.4%",
+        "total_deaths_error_pct": "4242.5%"
+      },
+      "learned_R0": 2.5438321374615134,
+      "learned_IFR": 0.05,
+      "actual_R0": 5.0,
+      "actual_IFR": 0.015
+    },
+    {
+      "state": "Maharashtra",
+      "variant": "omicron_ba1",
+      "period": "2022-01-01 to 2022-03-31",
+      "metrics": {
+        "MAE": 0.17,
+        "RMSE": 0.28,
+        "MAPE": "1604.2%",
+        "R_squared": 0.4002,
+        "correlation": 0.4495,
+        "peak_timing_error_days": -2,
+        "peak_magnitude_error_pct": "5983.8%",
+        "total_deaths_error_pct": "10007.0%"
+      },
+      "learned_R0": 2.3083823447628316,
+      "learned_IFR": 0.05,
+      "actual_R0": 7.0,
+      "actual_IFR": 0.003
+    },
+    {
+      "state": "Maharashtra",
+      "variant": "wildtype",
+      "period": "2020-09-01 to 2020-12-31",
+      "metrics": {
+        "MAE": 0.52,
+        "RMSE": 0.57,
+        "MAPE": "219.1%",
+        "R_squared": 0.0,
+        "correlation": 0.0,
+        "peak_timing_error_days": 65,
+        "peak_magnitude_error_pct": "13644.7%",
+        "total_deaths_error_pct": "27521.3%"
+      },
+      "learned_R0": 1.9164238130038889,
+      "learned_IFR": 0.05,
+      "actual_R0": 2.5,
+      "actual_IFR": 0.005
+    }
+  ]
+}
