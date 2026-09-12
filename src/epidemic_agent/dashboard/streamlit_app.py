@@ -24,7 +24,7 @@ from epidemic_agent.dashboard.utils import create_download_button, display_objec
 
 @st.cache_data(ttl=3600)
 def load_saved_simulation(filepath: str) -> dict[str, Any]:
-    store = get_state_store()
+    store = _load_store()
     return store.load(filepath)
 
 
@@ -159,7 +159,11 @@ def render_new_simulation_sidebar():
 
         initial_state = create_initial_state(config)
         with st.spinner("Running simulation..."):
-            result = run_simulation_step(initial_state)
+            try:
+                result = run_simulation_step(initial_state)
+            except Exception as e:
+                st.error(f"Simulation failed: {e}")
+                return
 
         st.session_state.simulation_state = result
         st.session_state.simulation_results = result["metadata"].get("predicted_outcomes", {})
@@ -496,11 +500,6 @@ def render_details_tab(state: "EpidemicState", results: dict[str, Any], recommen
 def render_backtesting_tab():
     st.subheader("Backtesting Against Real India COVID-19 Data")
 
-    import numpy as np
-    import pandas as pd
-    import plotly.graph_objects as go
-    from epidemic_agent.validation.backtester import Backtester
-
     st.markdown("""
     Compare model predictions against real COVID-19 data from **data.incovid19.org**.
     Tests on Delta, Omicron, and First Wave periods for Maharashtra.
@@ -517,109 +516,115 @@ def render_backtesting_tab():
     selected_wave = st.selectbox("Select Wave", list(variant_options.keys()), key="bt_wave")
 
     if st.button("Run Backtest", type="primary", key="bt_run"):
-        start_date, end_date, variant = variant_options[selected_wave]
-        bt = Backtester()
+        try:
+            import numpy as np
+            import pandas as pd
+            import plotly.graph_objects as go
+            from epidemic_agent.validation.backtester import Backtester
 
-        with st.spinner(f"Fetching real data for {selected_state}..."):
-            df = bt.fetch_state_timeseries(selected_state, start_date, end_date)
+            start_date, end_date, variant = variant_options[selected_wave]
+            bt = Backtester()
 
-        if df is None or len(df) == 0:
-            st.error("Could not fetch real data. Check your internet connection.")
-            return
+            with st.spinner(f"Fetching real data for {selected_state}..."):
+                df = bt.fetch_state_timeseries(selected_state, start_date, end_date)
 
-        from epidemic_agent.config import get_state_population
-        population = get_state_population(selected_state)
-        days = len(df)
-        initial_infected = max(int(df["daily_confirmed"].iloc[0]) if "daily_confirmed" in df.columns else 100, 10)
+            if df is None or len(df) == 0:
+                st.error("Could not fetch real data. Check your internet connection.")
+                return
 
-        from epidemic_agent.simulation.seir_model import SEIRModel
-        from epidemic_agent.simulation.variant import VariantParameterLearner
+            from epidemic_agent.config import get_state_population
+            population = get_state_population(selected_state)
+            days = len(df)
+            initial_infected = max(int(df["daily_confirmed"].iloc[0]) if "daily_confirmed" in df.columns else 100, 10)
 
-        real_dc = df["daily_confirmed"].fillna(0).values[:days]
-        real_dd = df["daily_deceased"].fillna(0).values[:days]
+            from epidemic_agent.simulation.seir_model import SEIRModel
+            from epidemic_agent.simulation.variant import VariantParameterLearner
 
-        with st.spinner("Learning variant parameters from real data..."):
-            learner = VariantParameterLearner()
-            learned = learner.learn_from_wave(
-                df["confirmed"], df["deceased"],
-                population=population,
+            real_dc = df["daily_confirmed"].fillna(0).values[:days]
+            real_dd = df["daily_deceased"].fillna(0).values[:days]
+
+            with st.spinner("Learning variant parameters from real data..."):
+                learner = VariantParameterLearner()
+                learned = learner.learn_from_wave(
+                    df["confirmed"], df["deceased"],
+                    population=population,
+                )
+
+            from epidemic_agent.config import VARIANT_PARAMS
+            known_params = VARIANT_PARAMS.get(variant, VARIANT_PARAMS["wildtype"])
+
+            known_model = SEIRModel(
+                population=population, R0=known_params["R0"], IFR=known_params["IFR"],
+                immune_escape=known_params["immune_escape"],
+                serial_interval=known_params["serial_interval"],
+                incubation_period=5.2, infectious_period=7.0,
+                days=days, states=[selected_state], initial_infected=initial_infected,
             )
+            known_result = known_model.run()
 
-        from epidemic_agent.config import VARIANT_PARAMS
-        known_params = VARIANT_PARAMS.get(variant, VARIANT_PARAMS["wildtype"])
+            learned_model = SEIRModel(
+                population=population, R0=learned.R0, IFR=learned.IFR,
+                immune_escape=learned.immune_escape,
+                serial_interval=learned.serial_interval,
+                incubation_period=5.2, infectious_period=7.0,
+                days=days, states=[selected_state], initial_infected=initial_infected,
+            )
+            learned_result = learned_model.run()
 
-        known_model = SEIRModel(
-            population=population, R0=known_params["R0"], IFR=known_params["IFR"],
-            immune_escape=known_params["immune_escape"],
-            serial_interval=known_params["serial_interval"],
-            incubation_period=5.2, infectious_period=7.0,
-            days=days, states=[selected_state], initial_infected=initial_infected,
-        )
-        known_result = known_model.run()
+            sim_cases_known = np.array(known_result.daily_cases.get(selected_state, [0] * days))[:days]
+            sim_deaths_known = np.array(known_result.daily_deaths.get(selected_state, [0] * days))[:days]
+            sim_cases_learned = np.array(learned_result.daily_cases.get(selected_state, [0] * days))[:days]
+            sim_deaths_learned = np.array(learned_result.daily_deaths.get(selected_state, [0] * days))[:days]
 
-        learned_model = SEIRModel(
-            population=population, R0=learned.R0, IFR=learned.IFR,
-            immune_escape=learned.immune_escape,
-            serial_interval=learned.serial_interval,
-            incubation_period=5.2, infectious_period=7.0,
-            days=days, states=[selected_state], initial_infected=initial_infected,
-        )
-        learned_result = learned_model.run()
+            r_max = max(np.max(real_dc), 1)
+            s_max_known = max(np.max(sim_cases_known), 1)
+            s_max_learned = max(np.max(sim_cases_learned), 1)
 
-        sim_cases_known = np.array(known_result.daily_cases.get(selected_state, [0] * days))[:days]
-        sim_deaths_known = np.array(known_result.daily_deaths.get(selected_state, [0] * days))[:days]
-        sim_cases_learned = np.array(learned_result.daily_cases.get(selected_state, [0] * days))[:days]
-        sim_deaths_learned = np.array(learned_result.daily_deaths.get(selected_state, [0] * days))[:days]
+            corr_known_cases = float(np.corrcoef(real_dc / r_max, sim_cases_known / s_max_known)[0, 1]) if days > 1 else 0
+            corr_learned_cases = float(np.corrcoef(real_dc / r_max, sim_cases_learned / s_max_learned)[0, 1]) if days > 1 else 0
 
-        r_max = max(np.max(real_dc), 1)
-        s_max_known = max(np.max(sim_cases_known), 1)
-        s_max_learned = max(np.max(sim_cases_learned), 1)
+            rd_max = max(np.max(real_dd), 1)
+            sd_max_known = max(np.max(sim_deaths_known), 1)
+            sd_max_learned = max(np.max(sim_deaths_learned), 1)
 
-        corr_known_cases = float(np.corrcoef(real_dc / r_max, sim_cases_known / s_max_known)[0, 1]) if days > 1 else 0
-        corr_learned_cases = float(np.corrcoef(real_dc / r_max, sim_cases_learned / s_max_learned)[0, 1]) if days > 1 else 0
+            corr_known_deaths = float(np.corrcoef(real_dd / rd_max, sim_deaths_known / sd_max_known)[0, 1]) if days > 1 else 0
+            corr_learned_deaths = float(np.corrcoef(real_dd / rd_max, sim_deaths_learned / sd_max_learned)[0, 1]) if days > 1 else 0
 
-        rd_max = max(np.max(real_dd), 1)
-        sd_max_known = max(np.max(sim_deaths_known), 1)
-        sd_max_learned = max(np.max(sim_deaths_learned), 1)
+            st.markdown(f"### {selected_wave} — {selected_state}")
 
-        corr_known_deaths = float(np.corrcoef(real_dd / rd_max, sim_deaths_known / sd_max_known)[0, 1]) if days > 1 else 0
-        corr_learned_deaths = float(np.corrcoef(real_dd / rd_max, sim_deaths_learned / sd_max_learned)[0, 1]) if days > 1 else 0
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Learned R0", f"{learned.R0:.2f}", f"{known_params['R0']:.1f} actual")
+            with col2:
+                st.metric("Learned IFR", f"{learned.IFR:.4f}", f"{known_params['IFR']:.3f} actual")
+            with col3:
+                st.metric("Correlation (Cases)", f"{max(corr_known_cases, corr_learned_cases):.3f}")
 
-        st.markdown(f"### {selected_wave} — {selected_state}")
+            st.markdown("#### Daily Cases: Real vs Simulated")
+            fig_cases = go.Figure()
+            fig_cases.add_trace(go.Scatter(y=real_dc, name="Real Cases", line=dict(color="white")))
+            fig_cases.add_trace(go.Scatter(y=sim_cases_known, name=f"SEIR (R0={known_params['R0']})", line=dict(color="blue", dash="dash")))
+            fig_cases.add_trace(go.Scatter(y=sim_cases_learned, name=f"SEIR (Learned R0={learned.R0:.1f})", line=dict(color="orange")))
+            fig_cases.update_layout(xaxis_title="Day", yaxis_title="Daily Cases", template="plotly_dark")
+            st.plotly_chart(fig_cases, use_container_width=True)
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Learned R0", f"{learned.R0:.2f}", f"{known_params['R0']:.1f} actual")
-        with col2:
-            st.metric("Learned IFR", f"{learned.IFR:.4f}", f"{known_params['IFR']:.3f} actual")
-        with col3:
-            st.metric("Correlation (Cases)", f"{max(corr_known_cases, corr_learned_cases):.3f}")
+            st.markdown("#### Daily Deaths: Real vs Simulated")
+            fig_deaths = go.Figure()
+            fig_deaths.add_trace(go.Scatter(y=real_dd, name="Real Deaths", line=dict(color="white")))
+            fig_deaths.add_trace(go.Scatter(y=sim_deaths_known, name=f"SEIR (IFR={known_params['IFR']})", line=dict(color="red", dash="dash")))
+            fig_deaths.add_trace(go.Scatter(y=sim_deaths_learned, name=f"SEIR (Learned IFR={learned.IFR:.4f})", line=dict(color="orange")))
+            fig_deaths.update_layout(xaxis_title="Day", yaxis_title="Daily Deaths", template="plotly_dark")
+            st.plotly_chart(fig_deaths, use_container_width=True)
 
-        st.markdown("#### Daily Cases: Real vs Simulated")
-        fig_cases = go.Figure()
-        fig_cases.add_trace(go.Scatter(y=real_dc, name="Real Cases", line=dict(color="white")))
-        fig_cases.add_trace(go.Scatter(y=sim_cases_known, name=f"SEIR (R0={known_params['R0']})", line=dict(color="blue", dash="dash")))
-        fig_cases.add_trace(go.Scatter(y=sim_cases_learned, name=f"SEIR (Learned R0={learned.R0:.1f})", line=dict(color="orange")))
-        fig_cases.update_layout(xaxis_title="Day", yaxis_title="Daily Cases", template="plotly_dark")
-        st.plotly_chart(fig_cases, use_container_width=True)
+            st.info("**Note:** Absolute counts are overpredicted because the SEIR model does not model behavioral changes or interventions. Curve shape (timing, peak) is the meaningful comparison.")
 
-        st.markdown("#### Daily Deaths: Real vs Simulated")
-        fig_deaths = go.Figure()
-        fig_deaths.add_trace(go.Scatter(y=real_dd, name="Real Deaths", line=dict(color="white")))
-        fig_deaths.add_trace(go.Scatter(y=sim_deaths_known, name=f"SEIR (IFR={known_params['IFR']})", line=dict(color="red", dash="dash")))
-        fig_deaths.add_trace(go.Scatter(y=sim_deaths_learned, name=f"SEIR (Learned IFR={learned.IFR:.4f})", line=dict(color="orange")))
-        fig_deaths.update_layout(xaxis_title="Day", yaxis_title="Daily Deaths", template="plotly_dark")
-        st.plotly_chart(fig_deaths, use_container_width=True)
-
-        st.info("**Note:** Absolute counts are overpredicted because the SEIR model does not model behavioral changes or interventions. Curve shape (timing, peak) is the meaningful comparison.")
+        except Exception as e:
+            st.error(f"Backtesting failed: {e}")
+            st.info("Check your internet connection and try again.")
 
 
 def render_sensitivity_tab():
     st.subheader("Sensitivity Analysis")
-
-    import numpy as np
-    import plotly.graph_objects as go
-    from epidemic_agent.validation.sensitivity import SensitivityAnalyzer
 
     st.markdown("Analyze which parameters most affect epidemic outcomes.")
 
@@ -631,50 +636,55 @@ def render_sensitivity_tab():
     days = st.slider("Simulation days", 30, 120, 60, key="sa_days")
 
     if st.button("Run Analysis", type="primary", key="sa_run"):
-        with st.spinner("Running sensitivity analysis..."):
-            analyzer = SensitivityAnalyzer(variant=variant, days=days)
-            sa = analyzer.run_full_analysis()
+        try:
+            import numpy as np
+            import plotly.graph_objects as go
+            from epidemic_agent.validation.sensitivity import SensitivityAnalyzer
 
-        st.markdown("### Parameter Importance")
-        importance = sa.parameter_importance
-        fig_imp = go.Figure(go.Bar(
-            x=list(importance.values()),
-            y=list(importance.keys()),
-            orientation="h",
-            marker_color="#FF4B4B",
-        ))
-        fig_imp.update_layout(
-            xaxis_title="Relative Importance",
-            template="plotly_dark",
-            height=300,
-        )
-        st.plotly_chart(fig_imp, use_container_width=True)
+            with st.spinner("Running sensitivity analysis..."):
+                analyzer = SensitivityAnalyzer(variant=variant, days=days)
+                sa = analyzer.run_full_analysis()
 
-        st.markdown("### Parameter Sensitivities")
-        for r in sa.results:
-            with st.expander(f"{r.parameter} (base={r.base_value}, elasticity={r.elasticity:.3f})"):
-                fig_param = go.Figure(go.Scatter(
-                    x=r.variation_range,
-                    y=r.sensitivities,
-                    mode="lines+markers",
-                    line=dict(color="#FF4B4B"),
-                ))
-                fig_param.update_layout(
-                    xaxis_title=r.parameter,
-                    yaxis_title="Sensitivity",
-                    template="plotly_dark",
-                )
-                st.plotly_chart(fig_param, use_container_width=True)
+            st.markdown("### Parameter Importance")
+            importance = sa.parameter_importance
+            fig_imp = go.Figure(go.Bar(
+                x=list(importance.values()),
+                y=list(importance.keys()),
+                orientation="h",
+                marker_color="#FF4B4B",
+            ))
+            fig_imp.update_layout(
+                xaxis_title="Relative Importance",
+                template="plotly_dark",
+                height=300,
+            )
+            st.plotly_chart(fig_imp, use_container_width=True)
 
-        st.json(sa.summary())
+            st.markdown("### Parameter Sensitivities")
+            for r in sa.results:
+                with st.expander(f"{r.parameter} (base={r.base_value}, elasticity={r.elasticity:.3f})"):
+                    fig_param = go.Figure(go.Scatter(
+                        x=r.variation_range,
+                        y=r.sensitivities,
+                        mode="lines+markers",
+                        line=dict(color="#FF4B4B"),
+                    ))
+                    fig_param.update_layout(
+                        xaxis_title=r.parameter,
+                        yaxis_title="Sensitivity",
+                        template="plotly_dark",
+                    )
+                    st.plotly_chart(fig_param, use_container_width=True)
+
+            st.json(sa.summary())
+
+        except Exception as e:
+            st.error(f"Sensitivity analysis failed: {e}")
+            st.info("Try reducing the number of simulation days.")
 
 
 def render_uncertainty_tab():
     st.subheader("Uncertainty Quantification")
-
-    import numpy as np
-    import plotly.graph_objects as go
-    from epidemic_agent.validation.uncertainty import UncertaintyQuantifier
 
     st.markdown("Monte Carlo simulation with parameter perturbation to quantify prediction uncertainty.")
 
@@ -687,63 +697,72 @@ def render_uncertainty_tab():
     n_sims = st.slider("Number of simulations", 20, 200, 50, key="uq_n_sims")
 
     if st.button("Run Uncertainty Analysis", type="primary", key="uq_run"):
-        with st.spinner(f"Running {n_sims} Monte Carlo simulations..."):
-            uq = UncertaintyQuantifier(variant=variant, days=days, n_simulations=n_sims)
-            result = uq.quantify()
+        try:
+            import numpy as np
+            import plotly.graph_objects as go
+            from epidemic_agent.validation.uncertainty import UncertaintyQuantifier
 
-        s = result.summary()
-        st.markdown("### Summary")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Mean Deaths", f"{s['mean_deaths']:,.0f}", f"+/- {s['std_deaths']:,.0f}")
-        with col2:
-            st.metric("95% CI Deaths", s["95%_CI_deaths"])
-        with col3:
-            st.metric("Confidence Score", f"{s['confidence_score']:.3f}")
+            with st.spinner(f"Running {n_sims} Monte Carlo simulations..."):
+                uq = UncertaintyQuantifier(variant=variant, days=days, n_simulations=n_sims)
+                result = uq.quantify()
 
-        st.markdown("### Cases: Mean with 95% CI Band")
-        cases_band = result.daily_cases_band
-        x = list(range(len(cases_band.median)))
-        fig_cases = go.Figure()
-        fig_cases.add_trace(go.Scatter(
-            x=x + x[::-1],
-            y=cases_band.upper + cases_band.lower[::-1],
-            fill="toself",
-            fillcolor="rgba(255,75,75,0.2)",
-            line=dict(color="rgba(255,75,75,0)"),
-            name="95% CI",
-        ))
-        fig_cases.add_trace(go.Scatter(
-            x=x,
-            y=cases_band.median,
-            name="Median",
-            line=dict(color="#FF4B4B"),
-        ))
-        fig_cases.update_layout(xaxis_title="Day", yaxis_title="Daily Cases", template="plotly_dark")
-        st.plotly_chart(fig_cases, use_container_width=True)
+            s = result.summary()
+            st.markdown("### Summary")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Mean Deaths", f"{s['mean_deaths']:,.0f}", f"+/- {s['std_deaths']:,.0f}")
+            with col2:
+                st.metric("95% CI Deaths", s["95%_CI_deaths"])
+            with col3:
+                st.metric("Confidence Score", f"{s['confidence_score']:.3f}")
 
-        st.markdown("### Deaths: Mean with 95% CI Band")
-        deaths_band = result.daily_deaths_band
-        x = list(range(len(deaths_band.median)))
-        fig_deaths = go.Figure()
-        fig_deaths.add_trace(go.Scatter(
-            x=x + x[::-1],
-            y=deaths_band.upper + deaths_band.lower[::-1],
-            fill="toself",
-            fillcolor="rgba(255,75,75,0.2)",
-            line=dict(color="rgba(255,75,75,0)"),
-            name="95% CI",
-        ))
-        fig_deaths.add_trace(go.Scatter(
-            x=x,
-            y=deaths_band.median,
-            name="Median",
-            line=dict(color="#FF4B4B"),
-        ))
-        fig_deaths.update_layout(xaxis_title="Day", yaxis_title="Daily Deaths", template="plotly_dark")
-        st.plotly_chart(fig_deaths, use_container_width=True)
+            st.markdown("### Cases: Mean with 95% CI Band")
+            cases_band = result.daily_cases_band
+            x = list(range(len(cases_band.median)))
+            fig_cases = go.Figure()
+            fig_cases.add_trace(go.Scatter(
+                x=x + x[::-1],
+                y=cases_band.upper + cases_band.lower[::-1],
+                fill="toself",
+                fillcolor="rgba(255,75,75,0.2)",
+                line=dict(color="rgba(255,75,75,0)"),
+                name="95% CI",
+            ))
+            fig_cases.add_trace(go.Scatter(
+                x=x,
+                y=cases_band.median,
+                name="Median",
+                line=dict(color="#FF4B4B"),
+            ))
+            fig_cases.update_layout(xaxis_title="Day", yaxis_title="Daily Cases", template="plotly_dark")
+            st.plotly_chart(fig_cases, use_container_width=True)
 
-        st.json(s)
+            st.markdown("### Deaths: Mean with 95% CI Band")
+            deaths_band = result.daily_deaths_band
+            x = list(range(len(deaths_band.median)))
+            fig_deaths = go.Figure()
+            fig_deaths.add_trace(go.Scatter(
+                x=x + x[::-1],
+                y=deaths_band.upper + deaths_band.lower[::-1],
+                fill="toself",
+                fillcolor="rgba(255,75,75,0.2)",
+                line=dict(color="rgba(255,75,75,0)"),
+                name="95% CI",
+            ))
+            fig_deaths.add_trace(go.Scatter(
+                x=x,
+                y=deaths_band.median,
+                name="Median",
+                line=dict(color="#FF4B4B"),
+            ))
+            fig_deaths.update_layout(xaxis_title="Day", yaxis_title="Daily Deaths", template="plotly_dark")
+            st.plotly_chart(fig_deaths, use_container_width=True)
+
+            st.json(s)
+
+        except Exception as e:
+            st.error(f"Uncertainty analysis failed: {e}")
+            st.info("Try reducing the number of simulations or days.")
 
 
 def main():

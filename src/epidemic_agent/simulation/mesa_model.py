@@ -84,7 +84,7 @@ class PersonAgent(Agent):
             if random.random() < infection_prob:
                 neighbor.status = "exposed"
                 neighbor.days_infected = 0
-                self.model._state_infections[neighbor.state_name] += 1
+                self.model._state_infections_today[neighbor.state_name] += 1
 
     def _resolve_infection(self):
         ifr = self.model.base_IFR * AGE_IFR_MULTIPLIER.get(self.age_group, 1.0)
@@ -97,7 +97,7 @@ class PersonAgent(Agent):
         if random.random() < ifr:
             self.status = "deceased"
             self.model.deaths_today += 1
-            self.model._state_deaths[self.state_name] += 1
+            self.model._state_deaths_today[self.state_name] += 1
         else:
             self.status = "recovered"
             self.immune = True
@@ -128,38 +128,46 @@ class EpidemicModel(Model):
     ):
         super().__init__(seed=random_seed)
 
+        population = max(1, int(population))
+        R0 = max(0.01, float(R0))
+        IFR = max(0.0, min(1.0, float(IFR)))
+        days = max(1, int(days))
+        initial_infected = max(0, min(initial_infected, population))
+
         self.population = population
         self.R0 = R0
         self.base_IFR = IFR
-        self.immune_escape = immune_escape
-        self.serial_interval = serial_interval
-        self.incubation_period = int(incubation_period)
-        self.infectious_period = int(infectious_period)
+        self.immune_escape = max(0.0, min(1.0, float(immune_escape)))
+        self.serial_interval = max(1.0, float(serial_interval))
+        self.incubation_period = max(1, int(incubation_period))
+        self.infectious_period = max(1, int(infectious_period))
         self.days = days
         self.states = states
 
         self.contact_tracing_enabled = contact_tracing_enabled
-        self.tracing_efficiency = tracing_efficiency
-        self.isolation_compliance = isolation_compliance
-        self.tracing_delay = tracing_delay
-        self.lockdown_reduction = lockdown_reduction
-        self.mask_reduction = mask_reduction
-        self.vaccination_rate_multiplier = vaccination_rate_multiplier
+        self.tracing_efficiency = max(0.0, min(1.0, float(tracing_efficiency)))
+        self.isolation_compliance = max(0.0, min(1.0, float(isolation_compliance)))
+        self.tracing_delay = max(0, int(tracing_delay))
+        self.lockdown_reduction = max(0.0, min(1.0, float(lockdown_reduction)))
+        self.mask_reduction = max(0.0, min(1.0, float(mask_reduction)))
+        self.vaccination_rate_multiplier = max(0.0, float(vaccination_rate_multiplier))
 
         grid_size = max(10, int(np.sqrt(population / 10)))
         self.grid = MultiGrid(grid_size, grid_size, torus=True)
 
-        self.transmission_prob = R0 / (infectious_period * 10)
-        if lockdown_reduction > 0:
-            self.transmission_prob *= (1 - lockdown_reduction)
-        if mask_reduction > 0:
-            self.transmission_prob *= (1 - mask_reduction)
+        self.transmission_prob = R0 / (self.infectious_period * 10)
+        self.transmission_prob *= (1 - self.lockdown_reduction)
+        self.transmission_prob *= (1 - self.mask_reduction)
+        self.transmission_prob = max(0.0, min(1.0, self.transmission_prob))
 
         self.contacts_per_day = 10
 
         self.new_infections_today = 0
         self.deaths_today = 0
         self.recoveries_today = 0
+
+        self._state_infections_today: dict[str, int] = defaultdict(int)
+        self._state_deaths_today: dict[str, int] = defaultdict(int)
 
         self.daily_cases: dict[str, list[int]] = defaultdict(list)
         self.daily_deaths: dict[str, list[int]] = defaultdict(list)
@@ -210,8 +218,8 @@ class EpidemicModel(Model):
         self.deaths_today = 0
         self.recoveries_today = 0
 
-        self._state_infections: dict[str, int] = defaultdict(int)
-        self._state_deaths: dict[str, int] = defaultdict(int)
+        self._state_infections_today = defaultdict(int)
+        self._state_deaths_today = defaultdict(int)
 
         self.agents.do("step")
 
@@ -219,8 +227,8 @@ class EpidemicModel(Model):
             self._perform_contact_tracing()
 
         for state in self.states:
-            state_infections = self._state_infections[state]
-            state_deaths = self._state_deaths[state]
+            state_infections = self._state_infections_today[state]
+            state_deaths = self._state_deaths_today[state]
 
             self.daily_cases[state].append(state_infections)
             self.daily_deaths[state].append(state_deaths)
@@ -230,8 +238,8 @@ class EpidemicModel(Model):
             self.cumulative_deaths[state].append(prev_deaths + state_deaths)
 
             if len(self.daily_cases[state]) > 1:
-                prev_cases = self.daily_cases[state][-2] if len(self.daily_cases[state]) > 1 else 1
-                Rt = self.new_infections_today / max(prev_cases, 1) * self.R0
+                prev_state_cases = self.daily_cases[state][-2]
+                Rt = state_infections / max(prev_state_cases, 1) * self.R0
             else:
                 Rt = self.R0
             self.daily_Rt[state].append(Rt)
@@ -277,8 +285,7 @@ class EpidemicModel(Model):
             peak_cases[state] = int(max(cases)) if cases else 0
             total_deaths[state] = int(deaths[-1]) if deaths else 0
 
-            susceptible = sum(1 for a in self.agents if a.state_name == state and a.status == "susceptible")
-            final_infected[state] = self.population - susceptible
+            final_infected[state] = self.cumulative_cases[state][-1] if self.cumulative_cases[state] else 0
 
         return SimulationResult(
             daily_cases=dict(self.daily_cases),

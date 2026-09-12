@@ -12,7 +12,6 @@ from ..config import (
     SHOCK_THRESHOLD,
     SIMULATION_DAYS_PER_STEP,
 )
-from ..llm import get_llm_client
 from ..state import EpidemicState, VariantShockInfo
 from ..tools import (
     calculate_objective,
@@ -60,28 +59,27 @@ def _clean_state(state: EpidemicState) -> EpidemicState:
     return state
 
 
-_llm_client = None
-
-def _get_llm():
-    global _llm_client
-    if _llm_client is None:
-        _llm_client = get_llm_client()
-    return _llm_client
-
-
 def analyze_situation(state: EpidemicState) -> EpidemicState:
     logger.info(f"Day {state['current_day']}: Analyzing situation for {state['states']}")
 
     current_day = state["current_day"]
     states = state["states"]
 
-    data_result = fetch_epidemic_data.invoke({
-        "states": states,
-        "days_back": 90,
-        "metrics": ["cases", "deaths", "tests", "vaccination"],
-    })
+    try:
+        data_result = fetch_epidemic_data.invoke({
+            "states": states,
+            "days_back": 90,
+            "metrics": ["cases", "deaths", "tests", "vaccination"],
+        })
+    except Exception as e:
+        logger.warning(f"Failed to fetch epidemic data: {e}")
+        data_result = {"data": []}
 
-    demographics = fetch_demographics.invoke({"states": states})
+    try:
+        demographics = fetch_demographics.invoke({"states": states})
+    except Exception as e:
+        logger.warning(f"Failed to fetch demographics: {e}")
+        demographics = {"demographics": {}}
 
     epidemic_data = data_result.get("data", [])
 
@@ -133,10 +131,14 @@ def analyze_situation(state: EpidemicState) -> EpidemicState:
         "learned_params": learned_params,
     }
 
-    similar = _get_memory().query_similar(
-        situation_summary=f"Day {current_day}: {sum(state['infected'].values())} cases across {len(states)} states",
-        n_results=3,
-    )
+    try:
+        similar = _get_memory().query_similar(
+            situation_summary=f"Day {current_day}: {sum(state['infected'].values())} cases across {len(states)} states",
+            n_results=3,
+        )
+    except Exception as e:
+        logger.warning(f"Memory query failed: {e}")
+        similar = []
 
     state["metadata"]["situation_analysis"] = situation
     state["metadata"]["historical_context"] = similar
@@ -173,11 +175,15 @@ def detect_shocks(state: EpidemicState) -> EpidemicState:
         actual_dict[s]["cases"] = actual_dict[s]["cases"][-1] if actual_dict[s]["cases"] else 0
         actual_dict[s]["deaths"] = actual_dict[s]["deaths"][-1] if actual_dict[s]["deaths"] else 0
 
-    shock_result = detect_variant_shock.invoke({
-        "predicted": predicted,
-        "actual": actual_dict,
-        "threshold": SHOCK_THRESHOLD,
-    })
+    try:
+        shock_result = detect_variant_shock.invoke({
+            "predicted": predicted,
+            "actual": actual_dict,
+            "threshold": SHOCK_THRESHOLD,
+        })
+    except Exception as e:
+        logger.warning(f"Shock detection failed: {e}")
+        shock_result = {"shock_detected": False, "anomalies": {}, "recommended_action": "", "severity": "none"}
 
     state["variant_shock"] = VariantShockInfo(
         shock_detected=shock_result.get("shock_detected", False),
@@ -205,7 +211,20 @@ def llm_reasoning(state: EpidemicState) -> EpidemicState:
     }
 
     history = state.get("metadata", {}).get("reasoning_history", [])
-    result = _reasoner.reason(reasoning_input, history)
+    try:
+        result = _reasoner.reason(reasoning_input, history)
+    except Exception as e:
+        logger.warning(f"Reasoning failed: {e}")
+        from .reasoning import ReasoningResult
+        result = ReasoningResult(
+            severity="medium",
+            rationale=f"Reasoning failed: {e}",
+            recommended_policies=["contact_tracing", "social_distancing", "mask_mandate", "enhanced_testing"],
+            confidence=0.3,
+            uncertainty_factors=["reasoning_module_error"],
+            policy_ranking=[],
+            failure_detected=False,
+        )
 
     state["metadata"]["reasoning_result"] = {
         "severity": result.severity,
@@ -266,7 +285,17 @@ def multi_agent_debate(state: EpidemicState) -> EpidemicState:
         "healthcare_capacity": state["healthcare_capacity"],
     }
 
-    debate_result = _debater.debate(candidate_policies, debate_input, severity, rounds=2)
+    try:
+        debate_result = _debater.debate(candidate_policies, debate_input, severity, rounds=2)
+    except Exception as e:
+        logger.warning(f"Debate failed: {e}")
+        from .agents import DebateResult
+        debate_result = DebateResult(
+            consensus_policies=candidate_policies[:2] if candidate_policies else [],
+            agreement_score=0.5,
+            dissenting_opinions=[],
+            reasoning=f"Debate failed: {e}",
+        )
 
     state["metadata"]["debate_result"] = {
         "consensus_policies": debate_result.consensus_policies,
@@ -329,17 +358,21 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
     intervention_records = []
     for intervention in interventions:
         for s in state["states"]:
-            eval_result = evaluate_policy.invoke({
-                "policy": intervention,
-                "state": s,
-                "current_state": {
-                    "infected": state["infected"],
-                    "Rt_estimates": state["Rt_estimates"],
-                    "population": state["population"],
-                },
-                "variant": state["active_variants"].get(s, "wildtype"),
-                "projection_days": SIMULATION_DAYS_PER_STEP,
-            })
+            try:
+                eval_result = evaluate_policy.invoke({
+                    "policy": intervention,
+                    "state": s,
+                    "current_state": {
+                        "infected": state["infected"],
+                        "Rt_estimates": state["Rt_estimates"],
+                        "population": state["population"],
+                    },
+                    "variant": state["active_variants"].get(s, "wildtype"),
+                    "projection_days": SIMULATION_DAYS_PER_STEP,
+                })
+            except Exception as e:
+                logger.warning(f"Policy evaluation failed for {intervention}/{s}: {e}")
+                eval_result = {"success": False}
 
             if eval_result.get("success"):
                 intervention_records.append({
@@ -501,17 +534,20 @@ def finalize_recommendation(state: EpidemicState) -> EpidemicState:
         confidence=state["confidence_score"],
     )
 
-    _get_memory().add_decision(
-        decision_id=f"decision_{state['current_day']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        day=state["current_day"],
-        state=",".join(state["states"]),
-        situation_summary=f"Epidemic response decision for {state['states']}",
-        intervention=",".join(interventions),
-        params={},
-        predicted_outcome=predicted,
-        objective_value=state["objective_value"],
-        confidence=state["confidence_score"],
-    )
+    try:
+        _get_memory().add_decision(
+            decision_id=f"decision_{state['current_day']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            day=state["current_day"],
+            state=",".join(state["states"]),
+            situation_summary=f"Epidemic response decision for {state['states']}",
+            intervention=",".join(interventions),
+            params={},
+            predicted_outcome=predicted,
+            objective_value=state["objective_value"],
+            confidence=state["confidence_score"],
+        )
+    except Exception as e:
+        logger.warning(f"Failed to save decision to memory: {e}")
 
     return state
 

@@ -84,5 +84,5 @@ def simulate_spread(
 
         return {"success": True, "result": result.to_dict(), "model": model_type}
     except Exception as e:
-        logger.error(f"Simulation failed: {e}")
+        logger.error(f"Simulation failed: {e}", exc_info=True)
         return {"success": False, "error": str(e), "model": model_type}

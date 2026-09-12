@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from typing import Literal
 
 from langgraph.graph import END, StateGraph
@@ -68,13 +69,35 @@ class EpidemicWorkflow:
             return "replan"
         return "finalize"
 
-    def run(self, initial_state: EpidemicState, thread_id: str = "default") -> EpidemicState:
-        result = self.graph.invoke(initial_state)
-        return _clean_state(result)
+    def run(self, initial_state: EpidemicState) -> EpidemicState:
+        try:
+            result = self.graph.invoke(initial_state)
+            return _clean_state(result)
+        except Exception as e:
+            logger.error(f"Workflow failed: {e}", exc_info=True)
+            error_state = initial_state.copy()
+            error_state["metadata"] = error_state.get("metadata", {})
+            error_state["metadata"]["error"] = str(e)
+            error_state["metadata"]["error_traceback"] = traceback.format_exc()
+            error_state["metadata"]["run_complete"] = True
+            error_state["metadata"]["final_recommendation"] = {
+                "error": True,
+                "error_message": f"Workflow execution failed: {e}",
+                "recommended_interventions": [],
+                "confidence": 0.0,
+            }
+            return _clean_state(error_state)
 
-    def run_step(self, state: EpidemicState, thread_id: str = "default") -> EpidemicState:
-        result = self.graph.invoke(state)
-        return _clean_state(result)
+    def run_step(self, state: EpidemicState) -> EpidemicState:
+        try:
+            result = self.graph.invoke(state)
+            return _clean_state(result)
+        except Exception as e:
+            logger.error(f"Workflow step failed: {e}", exc_info=True)
+            state["metadata"] = state.get("metadata", {})
+            state["metadata"]["error"] = str(e)
+            state["metadata"]["error_traceback"] = traceback.format_exc()
+            return _clean_state(state)
 
 
 _workflow: EpidemicWorkflow | None = None

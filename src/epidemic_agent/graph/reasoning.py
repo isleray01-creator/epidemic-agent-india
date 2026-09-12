@@ -45,11 +45,10 @@ class ReasoningResult:
 
 
 class LLMReasoner:
-    """Rule-based reasoning with optional LLM integration."""
+    """Rule-based reasoning engine for epidemic response decisions."""
 
-    def __init__(self, use_llm: bool = False, llm_client: Any = None):
-        self.use_llm = use_llm
-        self.llm_client = llm_client
+    def __init__(self):
+        pass
 
     def reason(
         self,
