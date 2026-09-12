@@ -309,7 +309,7 @@ def run_full_backtest(waves: list[dict] = None) -> dict[str, Any]:
 
     in_sample_r2 = np.mean([r.metrics.r_squared for r in all_results])
     cv_results = [r for r in all_results if r.cv_metrics]
-    out_sample_r2 = np.mean([r.cv_metrics.get("cv_r2_mean", 0) for r in cv_results]) if cv_results else 0.0
+    out_sample_corr = np.mean([r.cv_metrics.get("cv_corr_mean", 0) for r in cv_results]) if cv_results else 0.0
     overall_corr = np.mean([r.metrics.correlation for r in all_results])
     overall_mape = np.mean([r.metrics.mape for r in all_results])
 
@@ -321,16 +321,16 @@ def run_full_backtest(waves: list[dict] = None) -> dict[str, Any]:
     summary["overall"] = {
         "total_backtests": len(all_results),
         "in_sample_R_squared": round(in_sample_r2, 4),
-        "out_of_sample_R_squared": round(out_sample_r2, 4),
-        "correlation": round(overall_corr, 4),
+        "out_of_sample_correlation": round(out_sample_corr, 4),
+        "in_sample_correlation": round(overall_corr, 4),
         "MAPE": f"{overall_mape:.1%}",
         "total_cases_error": f"{abs(total_sim_cases - total_real_cases) / total_real_cases:.1%}" if total_real_cases > 0 else "N/A",
         "total_deaths_error": f"{abs(total_sim_deaths - total_real_deaths) / total_real_deaths:.1%}" if total_real_deaths > 0 else "N/A",
-        "overfitting_gap": round(in_sample_r2 - out_sample_r2, 4),
+        "overfitting_gap": round(overall_corr - out_sample_corr, 4),
         "accuracy_rating": (
-            "Excellent" if out_sample_r2 > 0.7 else
-            "Good" if out_sample_r2 > 0.5 else
-            "Moderate" if out_sample_r2 > 0.3 else
+            "Excellent" if out_sample_corr > 0.7 else
+            "Good" if out_sample_corr > 0.5 else
+            "Moderate" if out_sample_corr > 0.3 else
             "Poor"
         ),
     }

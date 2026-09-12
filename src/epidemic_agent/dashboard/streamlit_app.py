@@ -11,31 +11,15 @@ from typing import Any
 
 import streamlit as st
 
-from epidemic_agent.config import INDIA_STATES, VARIANT_PARAMS, get_state_population
-from epidemic_agent.dashboard.components import (
-    METRIC_LABELS,
-    create_animated_choropleth,
-    create_animation_controls,
-    create_deaths_cases_dual_axis,
-    create_india_choropleth,
-    create_intervention_timeline,
-    create_metric_selector,
-    create_multi_metric_figure,
-    create_rt_heatmap,
-    create_state_selector,
-)
-from epidemic_agent.dashboard.utils import create_download_button, display_objective_breakdown, format_number
-from epidemic_agent.graph import get_workflow
-from epidemic_agent.persistence import get_state_store
-from epidemic_agent.state import EpidemicState, SimulationConfig
-from epidemic_agent.tools import fetch_epidemic_data
-
 st.set_page_config(
     page_title="Epidemic Response Agent - India",
     page_icon="🦠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+from epidemic_agent.config import INDIA_STATES, VARIANT_PARAMS, get_state_population
+from epidemic_agent.dashboard.utils import create_download_button, display_objective_breakdown, format_number
 
 
 @st.cache_data(ttl=3600)
@@ -44,9 +28,21 @@ def load_saved_simulation(filepath: str) -> dict[str, Any]:
     return store.load(filepath)
 
 
+@st.cache_resource
+def _load_workflow():
+    from epidemic_agent.graph import get_workflow
+    return get_workflow()
+
+
+@st.cache_resource
+def _load_store():
+    from epidemic_agent.persistence import get_state_store
+    return get_state_store()
+
+
 def initialize_session_state():
     if "workflow" not in st.session_state:
-        st.session_state.workflow = get_workflow()
+        st.session_state.workflow = _load_workflow()
 
     if "simulation_state" not in st.session_state:
         st.session_state.simulation_state = None
@@ -58,7 +54,9 @@ def initialize_session_state():
         st.session_state.current_recommendation = None
 
 
-def create_initial_state(config: SimulationConfig) -> EpidemicState:
+def create_initial_state(config: "SimulationConfig") -> "EpidemicState":
+    from epidemic_agent.state import EpidemicState
+
     population = {}
     for state in config.states:
         population[state] = get_state_population(state)
@@ -95,7 +93,7 @@ def create_initial_state(config: SimulationConfig) -> EpidemicState:
     )
 
 
-def run_simulation_step(state: EpidemicState) -> EpidemicState:
+def run_simulation_step(state: "EpidemicState") -> "EpidemicState":
     return st.session_state.workflow.run(state)
 
 
@@ -148,6 +146,8 @@ def render_new_simulation_sidebar():
             st.sidebar.error("Please select at least one state")
             return
 
+        from epidemic_agent.state import SimulationConfig
+
         config = SimulationConfig(
             country=country,
             states=available_states,
@@ -170,7 +170,7 @@ def render_new_simulation_sidebar():
 def render_load_saved_sidebar():
     st.sidebar.subheader("Load Saved State")
     try:
-        store = get_state_store()
+        store = _load_store()
     except (ValueError, Exception):
         st.sidebar.info("State store not configured (missing PICKLE_HMAC_KEY)")
         return
@@ -205,6 +205,8 @@ def render_realtime_sidebar():
     days_back = st.sidebar.slider("Days back", 7, 180, 30)
 
     if st.sidebar.button("Fetch Latest Data"):
+        from epidemic_agent.tools import fetch_epidemic_data
+
         with st.spinner("Fetching data..."):
             result = fetch_epidemic_data.invoke({
                 "states": states,
@@ -259,7 +261,7 @@ def render_validation_tabs():
         render_uncertainty_tab()
 
 
-def render_header(state: EpidemicState, recommendation: dict[str, Any]):
+def render_header(state: "EpidemicState", recommendation: dict[str, Any]):
     col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
@@ -279,7 +281,7 @@ def render_header(state: EpidemicState, recommendation: dict[str, Any]):
         st.info(f"**Recommendation:** {recommendation.get('rationale', 'No rationale available')}")
 
 
-def render_tabs(state: EpidemicState, results: dict[str, Any], recommendation: dict[str, Any]):
+def render_tabs(state: "EpidemicState", results: dict[str, Any], recommendation: dict[str, Any]):
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "🗺️ Map View",
         "📈 Metrics",
@@ -316,7 +318,12 @@ def render_tabs(state: EpidemicState, results: dict[str, Any], recommendation: d
         render_uncertainty_tab()
 
 
-def render_map_tab(state: EpidemicState, results: dict[str, Any]):
+def render_map_tab(state: "EpidemicState", results: dict[str, Any]):
+    from epidemic_agent.dashboard.components import (
+        METRIC_LABELS, create_metric_selector, create_state_selector,
+        create_india_choropleth,
+    )
+
     st.subheader("Epidemic Map")
 
     col1, col2 = st.columns([3, 1])
@@ -348,7 +355,12 @@ def render_map_tab(state: EpidemicState, results: dict[str, Any]):
             st.info("Run a simulation to see map data")
 
 
-def render_metrics_tab(state: EpidemicState, results: dict[str, Any]):
+def render_metrics_tab(state: "EpidemicState", results: dict[str, Any]):
+    from epidemic_agent.dashboard.components import (
+        create_multi_metric_figure, create_rt_heatmap,
+        create_deaths_cases_dual_axis,
+    )
+
     st.subheader("Epidemic Metrics Over Time")
 
     if not results:
@@ -386,7 +398,9 @@ def render_metrics_tab(state: EpidemicState, results: dict[str, Any]):
     display_objective_breakdown(state["objective_breakdown"])
 
 
-def render_timeline_tab(state: EpidemicState, results: dict[str, Any]):
+def render_timeline_tab(state: "EpidemicState", results: dict[str, Any]):
+    from epidemic_agent.dashboard.components import create_intervention_timeline
+
     st.subheader("Intervention Timeline")
 
     fig = create_intervention_timeline(
@@ -401,7 +415,12 @@ def render_timeline_tab(state: EpidemicState, results: dict[str, Any]):
             st.json(record)
 
 
-def render_animation_tab(state: EpidemicState, results: dict[str, Any]):
+def render_animation_tab(state: "EpidemicState", results: dict[str, Any]):
+    from epidemic_agent.dashboard.components import (
+        METRIC_LABELS, create_metric_selector, create_animation_controls,
+        create_animated_choropleth,
+    )
+
     st.subheader("Epidemic Animation")
 
     if not results:
@@ -427,7 +446,7 @@ def render_animation_tab(state: EpidemicState, results: dict[str, Any]):
         st.plotly_chart(fig, use_container_width=True)
 
 
-def render_details_tab(state: EpidemicState, results: dict[str, Any], recommendation: dict[str, Any]):
+def render_details_tab(state: "EpidemicState", results: dict[str, Any], recommendation: dict[str, Any]):
     st.subheader("Simulation Details")
 
     col1, col2 = st.columns(2)

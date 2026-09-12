@@ -229,7 +229,9 @@ class RichardsFitter:
             total_scale = max(total_cases, 1)
             total_err = ((np.sum(pred_daily) - total_cases) / total_scale) ** 2
 
-            return cum_err + 3.0 * daily_err + 2.0 * peak_err + 1.0 * timing_err + 2.0 * total_err
+            sigma_penalty = 0.01 * max(0, sigma - 2.0) ** 2
+
+            return cum_err + 3.0 * daily_err + 2.0 * peak_err + 1.0 * timing_err + 2.0 * total_err + sigma_penalty
 
         bounds = [
             (total_cases * 0.1, total_cases * 20),
@@ -385,7 +387,7 @@ class RichardsFitter:
         self,
         daily_cases: np.ndarray,
         population: int,
-        train_window: int = 30,
+        train_window: int = 42,
         horizon: int = 7,
         maxiter: int = 50,
     ) -> dict[str, float]:
@@ -397,45 +399,38 @@ class RichardsFitter:
         all_corr = []
         all_mape = []
 
-        step = max(horizon, 14)
+        step = horizon
         for start in range(0, n - train_window - horizon + 1, step):
             train_data = daily_cases[start:start + train_window].astype(float)
             test_data = daily_cases[start + train_window:start + train_window + horizon].astype(float)
 
-            if np.sum(train_data) < 1 or np.sum(test_data) < 1:
+            if np.sum(train_data) < 10 or np.sum(test_data) < 1:
                 continue
 
-            window = min(7, len(train_data) // 2)
-            if window < 3:
-                window = 3
-            if window % 2 == 0:
-                window += 1
+            alpha = 0.3
+            level = train_data[0]
+            for val in train_data:
+                level = alpha * val + (1 - alpha) * level
 
-            try:
-                smoothed = savgol_filter(train_data, window, min(3, window - 1))
-            except Exception:
-                smoothed = np.convolve(train_data, np.ones(7) / 7, mode="same")
-
-            smoothed = np.maximum(smoothed, 0)
-
-            if len(smoothed) >= 14:
-                recent = smoothed[-14:]
-                trend = (recent[-1] - recent[0]) / 14
-                level = recent[-1]
-            else:
-                trend = (smoothed[-1] - smoothed[0]) / max(len(smoothed) - 1, 1)
-                level = smoothed[-1]
+            beta = 0.1
+            trend = 0
+            for i in range(1, min(14, len(train_data))):
+                trend = beta * (train_data[i] - train_data[i - 1]) + (1 - beta) * trend
 
             pred = np.array([max(0, level + trend * (i + 1)) for i in range(horizon)])
 
             r = test_data
             s = pred[:len(r)]
 
+            if np.std(r) < 1e-10 or np.std(s) < 1e-10:
+                corr = 0.0
+            else:
+                corr = float(np.corrcoef(r, s)[0, 1]) if len(r) > 1 else 0.0
+
             ss_res = np.sum((r - s) ** 2)
             ss_tot = np.sum((r - np.mean(r)) ** 2)
             r2 = 1.0 - (ss_res / max(ss_tot, 1e-10))
 
-            corr = float(np.corrcoef(r, s)[0, 1]) if len(r) > 1 else 0.0
             mask = r > 0
             mape = float(np.mean(np.abs((r[mask] - s[mask]) / r[mask]))) if mask.any() else 0.0
 
