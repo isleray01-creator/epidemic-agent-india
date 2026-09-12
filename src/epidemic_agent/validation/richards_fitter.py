@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
-import pickle
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,7 +11,7 @@ from scipy.optimize import differential_evolution
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path("D:/Agentic_ai/epidemic-agent-india/data/cache")
+CACHE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "cache"
 
 
 @dataclass
@@ -42,20 +42,29 @@ class RichardsFitter:
         return hashlib.md5(raw).hexdigest()
 
     def _load_cache(self, key: str) -> RichardsParams | None:
-        path = self.cache_dir / f"{key}.pkl"
+        path = self.cache_dir / f"{key}.json"
         if path.exists():
             try:
-                with open(path, "rb") as f:
-                    return pickle.load(f)
+                with open(path, "r") as f:
+                    data = json.load(f)
+                return RichardsParams(**data)
             except Exception:
                 pass
         return None
 
     def _save_cache(self, key: str, params: RichardsParams) -> None:
-        path = self.cache_dir / f"{key}.pkl"
+        path = self.cache_dir / f"{key}.json"
         try:
-            with open(path, "wb") as f:
-                pickle.dump(params, f)
+            with open(path, "w") as f:
+                json.dump({
+                    "K": params.K, "r": params.r, "t0": params.t0,
+                    "alpha": params.alpha, "Q": params.Q,
+                    "lognormal_A": params.lognormal_A,
+                    "lognormal_mu": params.lognormal_mu,
+                    "lognormal_sigma": params.lognormal_sigma,
+                    "fit_method": params.fit_method,
+                    "name": params.name,
+                }, f)
         except Exception:
             pass
 

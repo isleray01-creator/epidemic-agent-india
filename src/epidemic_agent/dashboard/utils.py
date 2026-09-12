@@ -17,13 +17,16 @@ def format_number(n: float) -> str:
 
 
 def display_objective_breakdown(breakdown: dict[str, float]):
+    if not breakdown:
+        st.info("No objective data available yet. Run a simulation first.")
+        return
     cols = st.columns(len(breakdown))
     for i, (metric, value) in enumerate(breakdown.items()):
         with cols[i]:
             st.metric(
                 metric.replace("_", " ").title(),
                 f"{value:.4f}",
-                help="Weight × normalized value"
+                help="Weight x normalized value"
             )
 
 

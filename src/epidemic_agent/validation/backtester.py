@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import json
 import logging
-import pickle
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -15,7 +15,7 @@ from .richards_fitter import RichardsFitter, RichardsParams
 
 logger = logging.getLogger(__name__)
 
-API_CACHE_DIR = Path("D:/Agentic_ai/epidemic-agent-india/data/cache/api")
+API_CACHE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "cache" / "api"
 
 
 @dataclass
@@ -71,7 +71,7 @@ class Backtester:
         API_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     def _api_cache_path(self, state_code: str) -> Path:
-        return API_CACHE_DIR / f"timeseries_{state_code}.pkl"
+        return API_CACHE_DIR / f"timeseries_{state_code}.json"
 
     def fetch_state_timeseries(
         self,
@@ -84,8 +84,8 @@ class Backtester:
 
         if cache_path.exists():
             try:
-                with open(cache_path, "rb") as f:
-                    raw_data = pickle.load(f)
+                with open(cache_path, "r") as f:
+                    raw_data = json.load(f)
                 logger.info(f"Loaded {state_code} from disk cache")
             except Exception:
                 raw_data = None
@@ -99,8 +99,8 @@ class Backtester:
                 r.raise_for_status()
                 raw_data = r.json()
                 try:
-                    with open(cache_path, "wb") as f:
-                        pickle.dump(raw_data, f)
+                    with open(cache_path, "w") as f:
+                        json.dump(raw_data, f)
                 except Exception:
                     pass
             except Exception as e:

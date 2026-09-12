@@ -412,7 +412,7 @@ def render_animation_tab(state: EpidemicState, results: dict[str, Any]):
     metric_key = [k for k, v in METRIC_LABELS.items() if v == metric][0]
 
     n_days = min(
-        max(len(v) for v in results.get(metric_key, {}).values()) if results.get(metric_key) else 0,
+        max((len(v) for v in results.get(metric_key, {}).values()), default=0) if results.get(metric_key) else 0,
         100,
     )
 

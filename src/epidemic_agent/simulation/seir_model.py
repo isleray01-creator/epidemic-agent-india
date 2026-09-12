@@ -47,7 +47,7 @@ class SEIRModel:
 
     def _seir_ode(self, t, y):
         S, E, I, R, D = y
-        N = S + E + I + R
+        N = S + E + I + R + D
 
         if N == 0:
             return [0, 0, 0, 0, 0]
