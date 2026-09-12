@@ -23,6 +23,9 @@ from ..tools import (
     fetch_epidemic_data,
     simulate_spread,
 )
+from .reasoning import LLMReasoner
+from .learning import ExperienceMemory
+from .agents import MultiAgentDebater
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,11 @@ logger = logging.getLogger(__name__)
 def _get_memory():
     from ..memory import get_memory_store
     return get_memory_store()
+
+
+_reasoner = LLMReasoner()
+_debater = MultiAgentDebater()
+_experience_memory = ExperienceMemory()
 
 
 def _to_python(obj):
@@ -182,11 +190,110 @@ def detect_shocks(state: EpidemicState) -> EpidemicState:
     return state
 
 
+def llm_reasoning(state: EpidemicState) -> EpidemicState:
+    logger.info(f"Day {state['current_day']}: LLM Reasoning")
+
+    reasoning_input = {
+        "current_day": state["current_day"],
+        "infected": state["infected"],
+        "deceased": state["deceased"],
+        "population": state["population"],
+        "Rt_estimates": state["Rt_estimates"],
+        "active_variants": state["active_variants"],
+        "healthcare_capacity": state["healthcare_capacity"],
+        "cumulative_cases": state.get("cumulative_cases", {}),
+    }
+
+    history = state.get("metadata", {}).get("reasoning_history", [])
+    result = _reasoner.reason(reasoning_input, history)
+
+    state["metadata"]["reasoning_result"] = {
+        "severity": result.severity,
+        "rationale": result.rationale,
+        "recommended_policies": result.recommended_policies,
+        "confidence": result.confidence,
+        "uncertainty_factors": result.uncertainty_factors,
+        "failure_detected": result.failure_detected,
+        "failure_type": result.failure_type,
+        "recovery_action": result.recovery_action,
+    }
+
+    if result.failure_detected:
+        logger.warning(f"FAILURE DETECTED: {result.failure_type}. Recovery: {result.recovery_action}")
+        state["metadata"]["needs_recovery"] = True
+        state["metadata"]["recovery_action"] = result.recovery_action
+        state["confidence_score"] = max(0.1, state["confidence_score"] - 0.3)
+    else:
+        state["metadata"]["needs_recovery"] = False
+
+    history.append({
+        "day": state["current_day"],
+        "severity": result.severity,
+        "confidence": result.confidence,
+    })
+    state["metadata"]["reasoning_history"] = history[-20:]
+
+    logger.info(f"Reasoning: severity={result.severity}, confidence={result.confidence:.2f}")
+    return state
+
+
+def multi_agent_debate(state: EpidemicState) -> EpidemicState:
+    logger.info(f"Day {state['current_day']}: Multi-Agent Debate")
+
+    reasoning = state.get("metadata", {}).get("reasoning_result", {})
+    severity = reasoning.get("severity", "medium")
+
+    if reasoning.get("failure_detected"):
+        logger.info("Skipping debate due to failure detection")
+        state["metadata"]["debate_result"] = {
+            "consensus_policies": ["enhanced_testing", "contact_tracing"],
+            "agreement_score": 0.5,
+            "reasoning": "Failure detected - using emergency protocols",
+        }
+        return state
+
+    candidate_policies = reasoning.get("recommended_policies", [
+        "contact_tracing", "social_distancing", "mask_mandate", "enhanced_testing",
+    ])
+
+    debate_input = {
+        "current_day": state["current_day"],
+        "infected": state["infected"],
+        "deceased": state["deceased"],
+        "population": state["population"],
+        "Rt_estimates": state["Rt_estimates"],
+        "active_variants": state["active_variants"],
+        "healthcare_capacity": state["healthcare_capacity"],
+    }
+
+    debate_result = _debater.debate(candidate_policies, debate_input, severity, rounds=2)
+
+    state["metadata"]["debate_result"] = {
+        "consensus_policies": debate_result.consensus_policies,
+        "agreement_score": debate_result.agreement_score,
+        "dissenting_opinions": debate_result.dissenting_opinions,
+        "reasoning": debate_result.reasoning,
+    }
+
+    if debate_result.agreement_score < 0.3:
+        state["confidence_score"] = max(0.2, state["confidence_score"] - 0.1)
+        logger.warning(f"Low agreement in debate: {debate_result.agreement_score:.2f}")
+
+    logger.info(f"Debate consensus: {debate_result.consensus_policies}, agreement={debate_result.agreement_score:.2f}")
+    return state
+
+
 def select_interventions(state: EpidemicState) -> EpidemicState:
     logger.info(f"Day {state['current_day']}: Selecting interventions")
 
     shock = state.get("variant_shock", {})
-    if shock.get("shock_detected"):
+    reasoning = state.get("metadata", {}).get("reasoning_result", {})
+    debate = state.get("metadata", {}).get("debate_result", {})
+
+    if state["metadata"].get("needs_recovery"):
+        interventions = ["enhanced_testing", "contact_tracing", "quarantine"]
+        logger.info(f"Using emergency recovery policies")
+    elif shock.get("shock_detected"):
         logger.warning(f"Variant shock detected! Severity: {shock.get('severity')}")
         if shock.get("severity") == "high":
             interventions = [
@@ -204,11 +311,20 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
                 "contact_tracing", "enhanced_testing", "mask_mandate",
                 "social_distancing",
             ]
+    elif debate.get("consensus_policies"):
+        interventions = debate["consensus_policies"]
+        logger.info(f"Using debate consensus: {interventions}")
     else:
-        interventions = state["metadata"].get("planned_interventions", [
-            "contact_tracing", "social_distancing", "mask_mandate",
-            "enhanced_testing",
-        ])
+        severity = reasoning.get("severity", "medium")
+        advice = _experience_memory.get_policy_advice(severity)
+        if advice["best_policies"] and advice["confidence"] > 0.3:
+            interventions = advice["best_policies"]
+            logger.info(f"Using learned policies: {interventions}")
+        else:
+            interventions = state["metadata"].get("planned_interventions", [
+                "contact_tracing", "social_distancing", "mask_mandate",
+                "enhanced_testing",
+            ])
 
     intervention_records = []
     for intervention in interventions:
@@ -346,6 +462,7 @@ def finalize_recommendation(state: EpidemicState) -> EpidemicState:
 
     interventions = list(set().union(*state["current_policies"].values())) if state["current_policies"] else []
     predicted = state["metadata"].get("predicted_outcomes", {})
+    reasoning = state.get("metadata", {}).get("reasoning_result", {})
 
     recommendation = {
         "day": state["current_day"] - SIMULATION_DAYS_PER_STEP,
@@ -358,10 +475,31 @@ def finalize_recommendation(state: EpidemicState) -> EpidemicState:
         "confidence": state["confidence_score"],
         "variant_shock": state["variant_shock"],
         "rationale": _generate_rationale(state),
+        "severity": reasoning.get("severity", "unknown"),
+        "debate_agreement": state.get("metadata", {}).get("debate_result", {}).get("agreement_score", 0),
+        "failure_detected": reasoning.get("failure_detected", False),
     }
 
     state["metadata"]["final_recommendation"] = recommendation
     state["metadata"]["run_complete"] = True
+
+    outcome = {
+        "deaths": sum(predicted.get("total_deaths", {}).values()),
+        "r0_after": list(state["Rt_estimates"].values())[0] if state["Rt_estimates"] else 1.0,
+        "r0_reduction": 0.0,
+        "deaths_averted": 0.0,
+        "economic_cost": sum(r.get("cost", 0) for r in state["intervention_history"]),
+    }
+
+    _experience_memory.record_experience(
+        day=state["current_day"],
+        state=state,
+        policies=interventions,
+        severity=reasoning.get("severity", "medium"),
+        outcome=outcome,
+        rationale=reasoning.get("rationale", ""),
+        confidence=state["confidence_score"],
+    )
 
     _get_memory().add_decision(
         decision_id=f"decision_{state['current_day']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",

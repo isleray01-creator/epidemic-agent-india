@@ -13,6 +13,8 @@ from .nodes import (
     evaluate_objective,
     finalize_recommendation,
     implement_or_adapt,
+    llm_reasoning,
+    multi_agent_debate,
     select_interventions,
     simulate_outcomes,
 )
@@ -29,6 +31,8 @@ class EpidemicWorkflow:
 
         workflow.add_node("analyze_situation", analyze_situation)
         workflow.add_node("detect_shocks", detect_shocks)
+        workflow.add_node("llm_reasoning", llm_reasoning)
+        workflow.add_node("multi_agent_debate", multi_agent_debate)
         workflow.add_node("select_interventions", select_interventions)
         workflow.add_node("simulate_outcomes", simulate_outcomes)
         workflow.add_node("evaluate_objective", evaluate_objective)
@@ -38,7 +42,9 @@ class EpidemicWorkflow:
         workflow.set_entry_point("analyze_situation")
 
         workflow.add_edge("analyze_situation", "detect_shocks")
-        workflow.add_edge("detect_shocks", "select_interventions")
+        workflow.add_edge("detect_shocks", "llm_reasoning")
+        workflow.add_edge("llm_reasoning", "multi_agent_debate")
+        workflow.add_edge("multi_agent_debate", "select_interventions")
         workflow.add_edge("select_interventions", "simulate_outcomes")
         workflow.add_edge("simulate_outcomes", "evaluate_objective")
         workflow.add_edge("evaluate_objective", "implement_or_adapt")
@@ -47,7 +53,7 @@ class EpidemicWorkflow:
             "implement_or_adapt",
             self._should_adapt,
             {
-                "replan": "select_interventions",
+                "replan": "llm_reasoning",
                 "finalize": "finalize_recommendation",
             },
         )

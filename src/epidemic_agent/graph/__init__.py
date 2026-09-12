@@ -6,6 +6,14 @@ def detect_shocks(state):
     from .nodes import detect_shocks as _fn
     return _fn(state)
 
+def llm_reasoning(state):
+    from .nodes import llm_reasoning as _fn
+    return _fn(state)
+
+def multi_agent_debate(state):
+    from .nodes import multi_agent_debate as _fn
+    return _fn(state)
+
 def select_interventions(state):
     from .nodes import select_interventions as _fn
     return _fn(state)
