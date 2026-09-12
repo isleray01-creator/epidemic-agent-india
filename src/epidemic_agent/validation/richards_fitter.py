@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -37,6 +37,8 @@ class RichardsParams:
 
     ensemble_weights: dict = None
     best_model: str = "lognormal"
+    ensemble_daily_pred: list = field(default_factory=list)
+    ensemble_cum_pred: list = field(default_factory=list)
 
     def __post_init__(self):
         if self.wave_A is None:
@@ -111,6 +113,21 @@ def _detect_waves(daily_cases: np.ndarray, min_prominence_ratio: float = 0.10) -
     return merged_peaks if merged_peaks else [0]
 
 
+def _deseasonalize(data: np.ndarray, period: int = 7) -> np.ndarray:
+    if len(data) < period * 2:
+        return data.copy()
+    kernel = np.ones(period) / period
+    smoothed = np.convolve(data.astype(float), kernel, mode="same")
+    scale = np.sum(data) / max(np.sum(smoothed), 1e-10)
+    return np.maximum(smoothed * scale, 0)
+
+
+def _clean_daily_cases(daily_cases: np.ndarray) -> np.ndarray:
+    clean = np.where(np.isnan(daily_cases), 0, daily_cases)
+    clean = np.maximum(clean, 0)
+    return clean
+
+
 class RichardsFitter:
     """Ensemble fitter: log-normal, Gaussian, sigmoid with automatic model selection."""
 
@@ -151,6 +168,8 @@ class RichardsFitter:
                     "wave_sigma": params.wave_sigma,
                     "best_model": params.best_model,
                     "ensemble_weights": params.ensemble_weights,
+                    "ensemble_daily_pred": params.ensemble_daily_pred,
+                    "ensemble_cum_pred": params.ensemble_cum_pred,
                 }, f)
         except Exception:
             pass
@@ -184,6 +203,22 @@ class RichardsFitter:
             result += self._lognormal_daily(t, A, mu, sigma)
         return result
 
+    def _predict_daily_raw(self, params: RichardsParams, t: np.ndarray, days: int) -> np.ndarray:
+        if params.fit_method == "lognormal":
+            if params.n_waves > 1 and len(params.wave_A) > 1:
+                wave_params = list(zip(params.wave_A, params.wave_mu, params.wave_sigma))
+                return np.maximum(self._multi_wave_daily(t, wave_params), 0)
+            return np.maximum(self._lognormal_daily(t, params.lognormal_A, params.lognormal_mu, params.lognormal_sigma), 0)
+        elif params.fit_method == "gaussian":
+            return np.maximum(self._gaussian_daily(t, params.lognormal_A, params.lognormal_mu, params.lognormal_sigma), 0)
+        elif params.fit_method == "sigmoid":
+            cum = self._sigmoid_cumulative(t, params.K, params.r, params.t0)
+            return np.maximum(np.diff(np.maximum(cum, 0), prepend=0), 0)
+        elif params.fit_method == "richards":
+            cum = self._richards_cumulative(t, params.K, params.r, params.t0, params.alpha)
+            return np.maximum(np.diff(np.maximum(cum, 0), prepend=0), 0)
+        return np.zeros(days)
+
     def _compute_r2(self, real: np.ndarray, pred: np.ndarray) -> float:
         ss_res = np.sum((real - pred) ** 2)
         ss_tot = np.sum((real - np.mean(real)) ** 2)
@@ -213,53 +248,56 @@ class RichardsFitter:
         population: int,
         maxiter: int = 150,
     ) -> RichardsParams:
-        cache_key = self._cache_key(daily_cases, "_cases_v6")
+        cache_key = self._cache_key(daily_cases, "_cases_v7")
         cached = self._load_cache(cache_key)
         if cached is not None:
             return cached
 
-        days = len(daily_cases)
+        daily_cases = _clean_daily_cases(daily_cases)
+        smoothed = _deseasonalize(daily_cases)
+
+        days = len(smoothed)
         t = np.arange(days, dtype=float)
-        total_cases = np.sum(daily_cases)
+        total_cases = np.sum(smoothed)
 
         if total_cases < 1:
             return RichardsParams(K=1, r=0.1, t0=1.0, alpha=1.0, Q=1.0, name="empty")
 
-        wave_peaks = _detect_waves(daily_cases)
+        wave_peaks = _detect_waves(smoothed)
         n_waves = len(wave_peaks)
 
         candidates = []
 
-        ln_params = self._fit_lognormal(daily_cases, t, total_cases, days, maxiter)
-        ln_pred = self.predict_daily(ln_params, days)
-        ln_r2 = self._compute_r2(daily_cases, ln_pred)
-        ln_bic = self._compute_bic(daily_cases, ln_pred, 3)
+        ln_params = self._fit_lognormal(smoothed, t, total_cases, days, maxiter)
+        ln_pred = self._predict_daily_raw(ln_params, t, days)
+        ln_r2 = self._compute_r2(smoothed, ln_pred)
+        ln_bic = self._compute_bic(smoothed, ln_pred, 3)
         candidates.append(("lognormal", ln_params, ln_r2, ln_pred, ln_bic, 3))
 
-        gau_params = self._fit_gaussian(daily_cases, t, total_cases, days, maxiter)
-        gau_pred = self.predict_daily(gau_params, days)
-        gau_r2 = self._compute_r2(daily_cases, gau_pred)
-        gau_bic = self._compute_bic(daily_cases, gau_pred, 3)
+        gau_params = self._fit_gaussian(smoothed, t, total_cases, days, maxiter)
+        gau_pred = self._predict_daily_raw(gau_params, t, days)
+        gau_r2 = self._compute_r2(smoothed, gau_pred)
+        gau_bic = self._compute_bic(smoothed, gau_pred, 3)
         candidates.append(("gaussian", gau_params, gau_r2, gau_pred, gau_bic, 3))
 
-        sig_params = self._fit_sigmoid(daily_cases, t, total_cases, days, maxiter)
-        sig_pred = self.predict_daily(sig_params, days)
-        sig_r2 = self._compute_r2(daily_cases, sig_pred)
-        sig_bic = self._compute_bic(daily_cases, sig_pred, 3)
+        sig_params = self._fit_sigmoid(smoothed, t, total_cases, days, maxiter)
+        sig_pred = self._predict_daily_raw(sig_params, t, days)
+        sig_r2 = self._compute_r2(smoothed, sig_pred)
+        sig_bic = self._compute_bic(smoothed, sig_pred, 3)
         candidates.append(("sigmoid", sig_params, sig_r2, sig_pred, sig_bic, 3))
 
-        ric_params = self._fit_richards(daily_cases, t, total_cases, days, maxiter)
-        ric_pred = self.predict_daily(ric_params, days)
-        ric_r2 = self._compute_r2(daily_cases, ric_pred)
-        ric_bic = self._compute_bic(daily_cases, ric_pred, 4)
+        ric_params = self._fit_richards(smoothed, t, total_cases, days, maxiter)
+        ric_pred = self._predict_daily_raw(ric_params, t, days)
+        ric_r2 = self._compute_r2(smoothed, ric_pred)
+        ric_bic = self._compute_bic(smoothed, ric_pred, 4)
         candidates.append(("richards", ric_params, ric_r2, ric_pred, ric_bic, 4))
 
         if n_waves > 1 and n_waves <= 4 and days >= 60:
-            mw_params = self._fit_multi_wave(daily_cases, t, total_cases, days, n_waves, wave_peaks, maxiter)
+            mw_params = self._fit_multi_wave(smoothed, t, total_cases, days, n_waves, wave_peaks, maxiter)
             if mw_params is not None:
-                mw_pred = self.predict_daily(mw_params, days)
-                mw_r2 = self._compute_r2(daily_cases, mw_pred)
-                mw_bic = self._compute_bic(daily_cases, mw_pred, n_waves * 3)
+                mw_pred = self._predict_daily_raw(mw_params, t, days)
+                mw_r2 = self._compute_r2(smoothed, mw_pred)
+                mw_bic = self._compute_bic(smoothed, mw_pred, n_waves * 3)
                 candidates.append(("multi_wave", mw_params, mw_r2, mw_pred, mw_bic, n_waves * 3))
 
         candidates.sort(key=lambda x: x[4])
@@ -274,12 +312,16 @@ class RichardsFitter:
         if total_w > 0:
             bic_weights = [(n, p, w / total_w, pred) for n, p, w, pred in bic_weights]
 
-        ensemble_pred = np.zeros(days)
+        ensemble_daily = np.zeros(days)
         for name, params, w, pred in bic_weights:
-            ensemble_pred += w * pred
+            ensemble_daily += w * pred
+
+        ensemble_cum = np.cumsum(np.maximum(ensemble_daily, 0))
 
         best_params.best_model = best_name
         best_params.ensemble_weights = {name: round(w, 3) for name, _, w, _ in bic_weights}
+        best_params.ensemble_daily_pred = np.maximum(ensemble_daily, 0).tolist()
+        best_params.ensemble_cum_pred = ensemble_cum.tolist()
 
         logger.info(f"Best model: {best_name} (R2={best_r2:.3f}, BIC={best_bic:.1f}), "
                     f"weights: {best_params.ensemble_weights}")
@@ -311,7 +353,7 @@ class RichardsFitter:
             total_err = ((np.sum(pred) - total_cases) / max(total_cases, 1)) ** 2
             sigma_penalty = 0.05 * max(0, sigma - 1.5) ** 2
 
-            return cum_err + 3.0 * daily_err + 2.0 * peak_err + 1.0 * timing_err + 2.0 * total_err + sigma_penalty
+            return cum_err + 3.0 * daily_err + 2.0 * peak_err + 3.0 * timing_err + 2.0 * total_err + sigma_penalty
 
         bounds = [
             (total_cases * 0.1, total_cases * 20),
@@ -348,7 +390,7 @@ class RichardsFitter:
             timing_err = ((int(np.argmax(pred)) - peak_day) / max(days, 1)) ** 2
             total_err = ((np.sum(pred) - total_cases) / max(total_cases, 1)) ** 2
 
-            return daily_err + 2.0 * peak_err + 1.0 * timing_err + 2.0 * total_err
+            return daily_err + 2.0 * peak_err + 3.0 * timing_err + 2.0 * total_err
 
         bounds = [
             (peak_val * 0.1, peak_val * 10),
@@ -417,7 +459,7 @@ class RichardsFitter:
             peak_err = ((np.max(pred_daily) - np.max(daily_cases)) / max(np.max(daily_cases), 1)) ** 2
             timing_err = ((int(np.argmax(pred_daily)) - peak_day) / max(days, 1)) ** 2
 
-            return cum_err + 3.0 * daily_err + 2.0 * peak_err + 1.0 * timing_err
+            return cum_err + 3.0 * daily_err + 2.0 * peak_err + 3.0 * timing_err
 
         bounds = [
             (total_cases * 0.5, total_cases * 3),
@@ -506,8 +548,10 @@ class RichardsFitter:
             return None
 
     def predict_cumulative(self, params: RichardsParams, days: int) -> np.ndarray:
-        t = np.arange(days, dtype=float)
+        if params.ensemble_cum_pred and len(params.ensemble_cum_pred) >= days:
+            return np.array(params.ensemble_cum_pred[:days])
 
+        t = np.arange(days, dtype=float)
         if params.fit_method == "lognormal":
             if params.n_waves > 1 and len(params.wave_A) > 1:
                 wave_params = list(zip(params.wave_A, params.wave_mu, params.wave_sigma))
@@ -515,35 +559,30 @@ class RichardsFitter:
             else:
                 daily = self._lognormal_daily(t, params.lognormal_A, params.lognormal_mu, params.lognormal_sigma)
             return np.cumsum(np.maximum(daily, 0))
-
         elif params.fit_method == "gaussian":
             daily = self._gaussian_daily(t, params.lognormal_A, params.lognormal_mu, params.lognormal_sigma)
             return np.cumsum(np.maximum(daily, 0))
-
         elif params.fit_method == "sigmoid":
             return self._sigmoid_cumulative(t, params.K, params.r, params.t0)
-
         elif params.fit_method == "richards":
             return self._richards_cumulative(t, params.K, params.r, params.t0, params.alpha)
-
         return np.zeros(days)
 
     def predict_daily(self, params: RichardsParams, days: int) -> np.ndarray:
-        t = np.arange(days, dtype=float)
+        if params.ensemble_daily_pred and len(params.ensemble_daily_pred) >= days:
+            return np.array(params.ensemble_daily_pred[:days])
 
+        t = np.arange(days, dtype=float)
         if params.fit_method == "lognormal":
             if params.n_waves > 1 and len(params.wave_A) > 1:
                 wave_params = list(zip(params.wave_A, params.wave_mu, params.wave_sigma))
                 return np.maximum(self._multi_wave_daily(t, wave_params), 0)
             return np.maximum(self._lognormal_daily(t, params.lognormal_A, params.lognormal_mu, params.lognormal_sigma), 0)
-
         elif params.fit_method == "gaussian":
             return np.maximum(self._gaussian_daily(t, params.lognormal_A, params.lognormal_mu, params.lognormal_sigma), 0)
-
         elif params.fit_method in ("sigmoid", "richards"):
             cum = self.predict_cumulative(params, days)
             return np.maximum(np.diff(np.maximum(cum, 0), prepend=0), 0)
-
         return np.zeros(days)
 
     def predict_deaths_from_cases(
@@ -582,6 +621,7 @@ class RichardsFitter:
         horizon: int = 7,
         maxiter: int = 50,
     ) -> dict[str, float]:
+        daily_cases = _clean_daily_cases(daily_cases)
         n = len(daily_cases)
         if n < train_window + horizon:
             return {"cv_r2_mean": 0.0, "cv_r2_std": 0.0, "cv_corr_mean": 0.0, "cv_mape_mean": 0.0, "n_folds": 0}
@@ -590,7 +630,7 @@ class RichardsFitter:
         all_corr = []
         all_mape = []
 
-        step = horizon
+        step = max(horizon, 7)
         for start in range(0, n - train_window - horizon + 1, step):
             train_data = daily_cases[start:start + train_window].astype(float)
             test_data = daily_cases[start + train_window:start + train_window + horizon].astype(float)
@@ -603,17 +643,8 @@ class RichardsFitter:
                 pred_daily = self.predict_daily(params, train_window + horizon)
                 pred = pred_daily[train_window:train_window + horizon]
             except Exception:
-                alpha = 0.3
-                level = train_data[0]
-                for val in train_data:
-                    level = alpha * val + (1 - alpha) * level
-
-                beta = 0.1
-                trend = 0
-                for i in range(1, min(14, len(train_data))):
-                    trend = beta * (train_data[i] - train_data[i - 1]) + (1 - beta) * trend
-
-                pred = np.array([max(0, level + trend * (i + 1)) for i in range(horizon)])
+                last7 = train_data[-7:] if len(train_data) >= 7 else train_data
+                pred = np.tile(last7, (horizon // 7 + 1))[:horizon]
 
             r = test_data
             s = pred[:len(r)]

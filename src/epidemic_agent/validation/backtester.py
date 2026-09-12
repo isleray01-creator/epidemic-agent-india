@@ -11,7 +11,7 @@ import pandas as pd
 import requests
 
 from ..config import INDIA_STATE_CODES, VARIANT_PARAMS, get_state_population
-from .richards_fitter import RichardsFitter, RichardsParams
+from .richards_fitter import RichardsFitter, RichardsParams, _clean_daily_cases
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +206,8 @@ class Backtester:
 
         real_daily_cases = df["daily_confirmed"].fillna(0).values
         real_daily_deaths = df["daily_deceased"].fillna(0).values
+        real_daily_cases = _clean_daily_cases(real_daily_cases)
+        real_daily_deaths = _clean_daily_cases(real_daily_deaths)
         days = len(df)
 
         fitter = RichardsFitter()
@@ -230,7 +232,7 @@ class Backtester:
             peak_magnitude_error=(case_metrics.peak_magnitude_error + death_metrics.peak_magnitude_error) / 2,
             total_deaths_error=death_metrics.total_deaths_error,
             correlation=(case_metrics.correlation + death_metrics.correlation) / 2,
-            fit_method="lognormal",
+            fit_method=richards_params.fit_method,
         )
 
         cv_metrics = {}
