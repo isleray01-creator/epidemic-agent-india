@@ -76,6 +76,8 @@ INDIA_STATES = [
 ]
 
 INDIA_STATE_CODES = {
+    "India": "TT",
+    "Total": "TT",
     "Andhra Pradesh": "AP",
     "Arunachal Pradesh": "AR",
     "Assam": "AS",
@@ -169,6 +171,7 @@ def get_variant_params(variant: str) -> dict[str, float]:
 
 def get_state_population(state: str) -> int:
     populations = {
+        "India": 1_400_000_000,
         "Maharashtra": 124_000_000,
         "Uttar Pradesh": 230_000_000,
         "Bihar": 125_000_000,
