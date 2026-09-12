@@ -220,7 +220,7 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
                     },
                 })
 
-    state["current_policies"] = dict.fromkeys(state["states"], interventions)
+    state["current_policies"] = {s: list(interventions) for s in state["states"]}
     state["intervention_history"].extend(intervention_records)
     state["metadata"]["planned_interventions"] = interventions
 

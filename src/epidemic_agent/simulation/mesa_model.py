@@ -84,6 +84,7 @@ class PersonAgent(Agent):
             if random.random() < infection_prob:
                 neighbor.status = "exposed"
                 neighbor.days_infected = 0
+                self.model._state_infections[neighbor.state_name] += 1
 
     def _resolve_infection(self):
         ifr = self.model.base_IFR * AGE_IFR_MULTIPLIER.get(self.age_group, 1.0)
@@ -96,10 +97,11 @@ class PersonAgent(Agent):
         if random.random() < ifr:
             self.status = "deceased"
             self.model.deaths_today += 1
+            self.model._state_deaths[self.state_name] += 1
         else:
             self.status = "recovered"
             self.immune = True
-        self.model.recoveries_today += 1
+            self.model.recoveries_today += 1
 
 
 class EpidemicModel(Model):
@@ -208,20 +210,24 @@ class EpidemicModel(Model):
         self.deaths_today = 0
         self.recoveries_today = 0
 
+        self._state_infections: dict[str, int] = defaultdict(int)
+        self._state_deaths: dict[str, int] = defaultdict(int)
+
         self.agents.do("step")
 
         if self.contact_tracing_enabled and self.new_infections_today > 0:
             self._perform_contact_tracing()
 
         for state in self.states:
-            state_agents = [a for a in self.agents if a.state_name == state]
+            state_infections = self._state_infections[state]
+            state_deaths = self._state_deaths[state]
 
-            self.daily_cases[state].append(self.new_infections_today)
-            self.daily_deaths[state].append(self.deaths_today)
+            self.daily_cases[state].append(state_infections)
+            self.daily_deaths[state].append(state_deaths)
             prev_cum = self.cumulative_cases[state][-1] if self.cumulative_cases[state] else 0
-            self.cumulative_cases[state].append(prev_cum + self.new_infections_today)
+            self.cumulative_cases[state].append(prev_cum + state_infections)
             prev_deaths = self.cumulative_deaths[state][-1] if self.cumulative_deaths[state] else 0
-            self.cumulative_deaths[state].append(prev_deaths + self.deaths_today)
+            self.cumulative_deaths[state].append(prev_deaths + state_deaths)
 
             if len(self.daily_cases[state]) > 1:
                 prev_cases = self.daily_cases[state][-2] if len(self.daily_cases[state]) > 1 else 1

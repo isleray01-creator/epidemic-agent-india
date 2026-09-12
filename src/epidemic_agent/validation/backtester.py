@@ -177,11 +177,11 @@ class Backtester:
 
         return AccuracyMetrics(
             mae=mae, rmse=rmse, mape=mape,
-            r_squared=max(r_squared, 0.0),
+            r_squared=r_squared,
             peak_timing_error=peak_timing_error,
             peak_magnitude_error=peak_magnitude_error,
             total_deaths_error=total_deaths_error,
-            correlation=max(corr, 0.0),
+            correlation=corr,
         )
 
     def backtest_state(

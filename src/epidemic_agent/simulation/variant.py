@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 from dataclasses import dataclass
 
@@ -26,7 +27,7 @@ class VariantParams:
 
 class VariantParameterLearner:
     def __init__(self):
-        self.known_variants = VARIANT_PARAMS.copy()
+        self.known_variants = copy.deepcopy(VARIANT_PARAMS)
         self.learned_variants: dict[str, VariantParams] = {}
 
     def learn_from_wave(
