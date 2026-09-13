@@ -34,8 +34,10 @@ python scripts/fetch_data.py --states "Maharashtra,Kerala,Delhi,Karnataka,Tamil 
 # 5. Run simulation
 python -m epidemic_agent run --country india --days 60 --interventions contact_tracing
 
-# 6. Launch dashboard
-streamlit run src/epidemic_agent/dashboard/streamlit_app.py
+# 6. Launch Vercel React Web Application
+cd aegis-biosurveillance-intelligence
+npm install
+npm run dev
 ```
 
 ## Project Structure
