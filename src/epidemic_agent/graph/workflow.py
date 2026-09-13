@@ -71,12 +71,14 @@ class EpidemicWorkflow:
 
     def run(self, initial_state: EpidemicState) -> EpidemicState:
         try:
-            result = self.graph.invoke(initial_state)
+            import copy
+            state_copy = copy.deepcopy(initial_state)
+            result = self.graph.invoke(state_copy)
             return _clean_state(result)
         except Exception as e:
             logger.error(f"Workflow failed: {e}", exc_info=True)
             error_state = initial_state.copy()
-            error_state["metadata"] = error_state.get("metadata", {})
+            error_state["metadata"] = error_state.get("metadata", {}).copy()
             error_state["metadata"]["error"] = str(e)
             error_state["metadata"]["error_traceback"] = traceback.format_exc()
             error_state["metadata"]["run_complete"] = True
@@ -90,7 +92,9 @@ class EpidemicWorkflow:
 
     def run_step(self, state: EpidemicState) -> EpidemicState:
         try:
-            result = self.graph.invoke(state)
+            import copy
+            state_copy = copy.deepcopy(state)
+            result = self.graph.invoke(state_copy)
             return _clean_state(result)
         except Exception as e:
             logger.error(f"Workflow step failed: {e}", exc_info=True)

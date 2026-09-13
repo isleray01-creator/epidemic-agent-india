@@ -8,6 +8,7 @@ from ..config import (
     INCUBATION_PERIOD,
     INFECTIOUS_PERIOD,
     get_variant_params,
+    get_state_population,
     settings,
 )
 from ..simulation.mesa_model import run_mesa_simulation
@@ -55,7 +56,8 @@ def simulate_spread(
 ) -> dict[str, Any]:
     states = states or ["Maharashtra", "Kerala", "Delhi"]
     interventions = interventions or ["contact_tracing"]
-    population = population or settings.default_population
+    if population is None:
+        population = sum(get_state_population(s) for s in states)
     population = max(1, int(population))
 
     variant_params = get_variant_params(variant)

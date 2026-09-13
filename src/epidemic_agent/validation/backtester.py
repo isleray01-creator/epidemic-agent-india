@@ -218,13 +218,14 @@ class Backtester:
         richards_params = fitter.fit_cumulative_cases(real_daily_cases, population, maxiter=80)
         fitted_daily_cases = fitter.predict_daily(richards_params, days)
 
+        split_idx = int(days * 0.7)
         ifr_fit, lag_fit = fitter.fit_deaths_from_cases(
-            real_daily_cases, real_daily_deaths, population, maxiter=50,
+            real_daily_cases[:split_idx], real_daily_deaths[:split_idx], population, maxiter=50,
         )
         fitted_daily_deaths, _ = fitter.predict_deaths_from_cases(real_daily_cases, ifr_fit, lag_fit)
 
         case_metrics = self.compute_accuracy(real_daily_cases[:days], fitted_daily_cases)
-        death_metrics = self.compute_accuracy(real_daily_deaths[:days], fitted_daily_deaths)
+        death_metrics = self.compute_accuracy(real_daily_deaths[split_idx:days], fitted_daily_deaths[split_idx:days])
 
         combined = AccuracyMetrics(
             mae=(case_metrics.mae + death_metrics.mae) / 2,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import random
 from collections import defaultdict
 
 import numpy as np
@@ -40,7 +39,8 @@ class PersonAgent(Agent):
         self.vaccine_efficacy = 0.0
         self.traced = False
         self.isolated = False
-        self.immune = False
+        self.contacts_traced = False
+        self.traced_day = -1
 
     def step(self):
         if self.status == "exposed":
@@ -59,17 +59,14 @@ class PersonAgent(Agent):
                 self._resolve_infection()
 
     def _spread_disease(self):
-        if self.model.contact_tracing_enabled and self.traced:
-            return
-
         cellmates = self.model.grid.get_cell_list_contents([self.pos])
         susceptible_neighbors = [a for a in cellmates if a.status == "susceptible"]
 
         if not susceptible_neighbors:
             return
 
-        contacts = min(len(susceptible_neighbors), self.model.contacts_per_day)
-        contacts = random.sample(susceptible_neighbors, contacts)
+        n_contacts = min(len(susceptible_neighbors), self.model.contacts_per_day)
+        contacts = self.model.random.sample(susceptible_neighbors, n_contacts)
 
         for neighbor in contacts:
             if neighbor.vaccinated:
@@ -77,7 +74,7 @@ class PersonAgent(Agent):
             else:
                 infection_prob = self.model.transmission_prob
 
-            if random.random() < infection_prob:
+            if self.model.random.random() < infection_prob:
                 neighbor.status = "exposed"
                 neighbor.days_infected = 0
                 self.model.new_infections_today += 1
@@ -91,13 +88,12 @@ class PersonAgent(Agent):
         if self.vaccinated:
             ifr *= (1 - self.vaccine_efficacy)
 
-        if random.random() < ifr:
+        if self.model.random.random() < ifr:
             self.status = "deceased"
             self.model.deaths_today += 1
             self.model._state_deaths_today[self.state_name] += 1
         else:
             self.status = "recovered"
-            self.immune = True
             self.model.recoveries_today += 1
 
 
@@ -154,13 +150,13 @@ class EpidemicModel(Model):
         grid_size = max(10, int(np.sqrt(population / 50)))
         self.grid = MultiGrid(grid_size, grid_size, torus=True)
 
+        self.contacts_per_day = max(1, int(np.sqrt(grid_size)))
+
         effective_R0 = R0
         effective_R0 *= (1 - self.lockdown_reduction)
         effective_R0 *= (1 - self.mask_reduction)
-        self.transmission_prob = effective_R0 / self.infectious_period
+        self.transmission_prob = effective_R0 / (self.infectious_period * self.contacts_per_day)
         self.transmission_prob = max(0.0, min(1.0, self.transmission_prob))
-
-        self.contacts_per_day = max(1, int(np.sqrt(grid_size)))
 
         self.new_infections_today = 0
         self.deaths_today = 0
@@ -197,9 +193,9 @@ class EpidemicModel(Model):
             districts = [f"{state}_D{i}" for i in range(max(1, count // 50000))]
 
             for _ in range(count):
-                district = random.choice(districts)
-                age_group = random.choices(AGE_GROUPS, weights=[12, 17, 18, 15, 12, 10, 8, 5, 3])[0]
-                has_comorbidity = random.random() < 0.25
+                district = self.random.choice(districts)
+                age_group = self.random.choices(AGE_GROUPS, weights=[12, 17, 18, 15, 12, 10, 8, 5, 3])[0]
+                has_comorbidity = self.random.random() < 0.25
 
                 agent = PersonAgent(self, state, district, age_group, has_comorbidity)
 
@@ -210,17 +206,17 @@ class EpidemicModel(Model):
 
         if initial_infected > 0 and all_agents:
             n_infected = min(initial_infected, len(all_agents))
-            infected_agents = random.sample(all_agents, n_infected)
+            infected_agents = self.random.sample(all_agents, n_infected)
             for agent in infected_agents:
                 agent.status = "infected"
-                agent.days_infected = random.randint(0, self.infectious_period)
+                agent.days_infected = self.random.randint(0, max(0, self.infectious_period - 1))
                 infected_assigned += 1
 
         logger.info(f"Created agents across {len(self.states)} states, {infected_assigned} initially infected")
 
     def _initialize_vaccination(self):
         for agent in self.agents:
-            if random.random() < 0.3 * self.vaccination_rate_multiplier:
+            if self.random.random() < 0.3 * self.vaccination_rate_multiplier:
                 agent.vaccinated = True
                 agent.vaccine_efficacy = 0.7 * (1 - self.immune_escape)
 
@@ -248,16 +244,23 @@ class EpidemicModel(Model):
             prev_deaths = self.cumulative_deaths[state][-1] if self.cumulative_deaths[state] else 0
             self.cumulative_deaths[state].append(prev_deaths + state_deaths)
 
-            if len(self.daily_cases[state]) >= 7:
+            if len(self.daily_cases[state]) >= 14:
                 recent_avg = np.mean(self.daily_cases[state][-7:])
-                prev_avg = np.mean(self.daily_cases[state][-8:-1]) if len(self.daily_cases[state]) >= 8 else recent_avg
-                if prev_avg > 0:
-                    Rt = (recent_avg / prev_avg) * self.R0
+                prev_avg = np.mean(self.daily_cases[state][-14:-7])
+                if prev_avg > 0 and recent_avg > 0:
+                    growth_rate = np.log(recent_avg / prev_avg) / 7.0
+                    Rt = 1.0 + growth_rate * self.serial_interval
+                elif prev_avg > 0:
+                    Rt = 0.5
                 else:
                     Rt = self.R0
             elif len(self.daily_cases[state]) > 1:
                 prev_state_cases = self.daily_cases[state][-2]
-                Rt = state_infections / max(prev_state_cases, 1) * self.R0
+                if prev_state_cases > 0 and state_infections > 0:
+                    daily_growth = np.log(state_infections / max(prev_state_cases, 1))
+                    Rt = 1.0 + daily_growth * self.serial_interval
+                else:
+                    Rt = self.R0
             else:
                 Rt = self.R0
             Rt = max(0.01, min(Rt, 15.0))
@@ -265,21 +268,29 @@ class EpidemicModel(Model):
             self.variant_trajectory[state].append(self.variant)
 
     def _perform_contact_tracing(self):
-        infected_agents = [a for a in self.agents if a.status == "infected" and not a.traced]
+        current_day = len(self.daily_cases[self.states[0]]) if self.states else 0
+
+        for agent in list(self.agents):
+            if agent.traced and not agent.isolated and agent.traced_day >= 0:
+                if current_day - agent.traced_day >= self.tracing_delay:
+                    if self.random.random() < self.isolation_compliance:
+                        agent.isolated = True
+
+        infected_agents = [a for a in self.agents if a.status == "infected" and not a.contacts_traced]
 
         for agent in infected_agents:
-            if random.random() > self.tracing_efficiency:
+            if self.random.random() > self.tracing_efficiency:
                 continue
 
             cellmates = self.grid.get_cell_list_contents([agent.pos])
             contacts = [a for a in cellmates if a.status in ("susceptible", "exposed")]
 
             for contact in contacts:
-                if random.random() < self.isolation_compliance:
-                    contact.isolated = True
+                if not contact.traced:
                     contact.traced = True
+                    contact.traced_day = current_day
 
-            agent.traced = True
+            agent.contacts_traced = True
 
     def run(self) -> SimulationResult:
         for day in range(self.days):

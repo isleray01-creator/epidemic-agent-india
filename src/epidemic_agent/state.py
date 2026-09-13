@@ -48,7 +48,7 @@ class EpidemicState(TypedDict):
 class SimulationConfig(BaseModel):
     country: str = "India"
     states: list[str] = Field(default_factory=lambda: ["Maharashtra", "Kerala", "Delhi"])
-    population: int = 1_000_000
+    population: int = 0
     days: int = 60
     initial_infected: int = 100
     initial_variant: str = "wildtype"
@@ -56,6 +56,11 @@ class SimulationConfig(BaseModel):
     contact_tracing_efficiency: float = 0.6
     contact_tracing_compliance: float = 0.7
     random_seed: int = 42
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.population == 0:
+            from .config import get_state_population
+            self.population = sum(get_state_population(s) for s in self.states)
 
 
 class DashboardState(BaseModel):

@@ -235,20 +235,13 @@ class RichardsFitter:
             return -1e10
         return n * np.log(ss_res / n) + n_params * np.log(n)
 
-    def _compute_aic(self, real: np.ndarray, pred: np.ndarray, n_params: int) -> float:
-        n = len(real)
-        ss_res = np.sum((real - pred) ** 2)
-        if ss_res < 1e-10:
-            return -1e10
-        return n * np.log(ss_res / n) + 2 * n_params
-
     def fit_cumulative_cases(
         self,
         daily_cases: np.ndarray,
         population: int,
         maxiter: int = 150,
     ) -> RichardsParams:
-        cache_key = self._cache_key(daily_cases, f"_cases_v7_pop{population}")
+        cache_key = self._cache_key(daily_cases, f"_cases_v8_pop{population}_max{maxiter}")
         cached = self._load_cache(cache_key)
         if cached is not None:
             return cached

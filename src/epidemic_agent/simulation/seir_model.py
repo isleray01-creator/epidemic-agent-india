@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.integrate import solve_ivp
 
-from ..config import AGE_IFR_MULTIPLIER, COMORBIDITY_IFR_MULTIPLIER
+from ..config import COMORBIDITY_IFR_MULTIPLIER
 from ..simulation.result import SimulationResult
 
 logger = logging.getLogger(__name__)
@@ -59,20 +59,21 @@ class SEIRModel:
             effective_beta *= (1 - traced_fraction)
 
         new_infections = effective_beta * S * I / N
-        new_exposed = new_infections
-        leaving_infectious = self.sigma * E
-        new_recovered_no_death = self.gamma * I
+        leaving_exposed = self.sigma * E
+        leaving_infectious = self.gamma * I
 
-        avg_IFR = self.IFR * np.mean(list(AGE_IFR_MULTIPLIER.values()))
+        avg_IFR = self.IFR
         avg_IFR *= (1 - self.vaccinated_fraction * self.vaccine_efficacy)
         avg_IFR *= (1 + 0.25 * (COMORBIDITY_IFR_MULTIPLIER - 1))
+        avg_IFR = min(avg_IFR, 1.0)
 
         new_deaths = avg_IFR * leaving_infectious
+        new_recovered = leaving_infectious - new_deaths
 
         dS = -new_infections
-        dE = new_exposed - leaving_infectious
-        dI = leaving_infectious - new_recovered_no_death
-        dR = new_recovered_no_death - new_deaths
+        dE = new_infections - leaving_exposed
+        dI = leaving_exposed - leaving_infectious
+        dR = new_recovered
         dD = new_deaths
 
         return [dS, dE, dI, dR, dD]
@@ -104,10 +105,14 @@ class SEIRModel:
         daily_deaths = np.maximum(np.diff(D), 0)
 
         Rt = []
+        effective_beta = self.beta
+        if self.contact_tracing_enabled:
+            traced_fraction = self.tracing_efficiency * self.isolation_compliance
+            effective_beta *= (1 - traced_fraction)
         for i in range(len(I)):
             N_i = S[i] + E[i] + I[i] + R[i] + D[i]
             if N_i > 0:
-                Rt.append(self.beta * S[i] / (self.gamma * N_i))
+                Rt.append(effective_beta * S[i] / (self.gamma * N_i))
             else:
                 Rt.append(1.0)
 

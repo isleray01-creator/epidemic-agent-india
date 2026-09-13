@@ -153,11 +153,20 @@ def detect_shocks(state: EpidemicState) -> EpidemicState:
     predicted = state["metadata"].get("predicted_outcomes", {})
     actual = state["metadata"].get("situation_analysis", {}).get("epidemic_data", [])
 
-    if not predicted or not actual:
+    if not actual:
         state["variant_shock"] = VariantShockInfo(
             shock_detected=False,
             anomalies={},
             recommended_action="continue_monitoring",
+            severity="none",
+        ).model_dump()
+        return state
+
+    if not predicted:
+        state["variant_shock"] = VariantShockInfo(
+            shock_detected=False,
+            anomalies={},
+            recommended_action="first_iteration_no_predictions_yet",
             severity="none",
         ).model_dump()
         return state
@@ -357,6 +366,7 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
                 "enhanced_testing",
             ])
 
+    state_scores: dict[str, list[tuple[str, float]]] = {s: [] for s in state["states"]}
     intervention_records = []
     for intervention in interventions:
         for s in state["states"]:
@@ -377,9 +387,12 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
                 eval_result = {"success": False}
 
             if eval_result.get("success"):
+                score = eval_result["evaluation"].get("Rt_reduction", 0) - eval_result["evaluation"].get("cost_inr", 0) / max(state["population"].get(s, 1), 1) * 1e6
+                state_scores[s].append((intervention, score))
                 intervention_records.append({
                     "day": state["current_day"],
                     "intervention_type": intervention,
+                    "state": s,
                     "cost": eval_result["evaluation"]["cost_inr"],
                     "projected_effect": {
                         "deaths_averted": eval_result["evaluation"]["projected_deaths"],
@@ -387,7 +400,16 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
                     },
                 })
 
-    state["current_policies"] = {s: list(interventions) for s in state["states"]}
+    state_policies = {}
+    for s in state["states"]:
+        scored = state_scores[s]
+        if scored:
+            scored.sort(key=lambda x: x[1], reverse=True)
+            state_policies[s] = [p for p, _ in scored[:4]]
+        else:
+            state_policies[s] = list(interventions)
+
+    state["current_policies"] = state_policies
     state["intervention_history"].extend(intervention_records)
     state["metadata"]["planned_interventions"] = interventions
 
@@ -441,7 +463,7 @@ def evaluate_objective(state: EpidemicState) -> EpidemicState:
     predicted = state["metadata"].get("predicted_outcomes", {})
     if not predicted:
         state["objective_value"] = 1.0
-        state["confidence_score"] = 0.0
+        state["objective_breakdown"] = {"deaths": 0, "economic": 0, "social": 0, "healthcare": 0}
         return state
 
     total_deaths = sum(predicted.get("total_deaths", {}).values())
@@ -460,19 +482,25 @@ def evaluate_objective(state: EpidemicState) -> EpidemicState:
     )
     healthcare_strain = min(current_icu / max(max_icu, 1), 1.0)
 
-    obj_result = calculate_objective.invoke({
-        "deaths": total_deaths,
-        "population": total_pop,
-        "economic_cost": economic_cost,
-        "social_cost": social_cost,
-        "healthcare_strain": healthcare_strain,
-    })
+    try:
+        obj_result = calculate_objective.invoke({
+            "deaths": total_deaths,
+            "population": total_pop,
+            "economic_cost": economic_cost,
+            "social_cost": social_cost,
+            "healthcare_strain": healthcare_strain,
+        })
 
-    state["objective_value"] = _to_python(obj_result["total_objective"])
-    state["objective_breakdown"] = {
-        k: _to_python(v) for k, v in obj_result["breakdown"].items()
-    }
-    state["confidence_score"] = float(0.8 if state["metadata"].get("predicted_outcomes") else 0.5)
+        state["objective_value"] = _to_python(obj_result["total_objective"])
+        state["objective_breakdown"] = {
+            k: _to_python(v) for k, v in obj_result["breakdown"].items()
+        }
+    except Exception as e:
+        logger.warning(f"Objective calculation failed: {e}")
+        state["objective_value"] = 0.5
+        state["objective_breakdown"] = {"deaths": 0, "economic": 0, "social": 0, "healthcare": 0}
+
+    state["confidence_score"] = min(state["confidence_score"], 0.8)
 
     logger.info(f"Objective value: {state['objective_value']:.4f}")
 
