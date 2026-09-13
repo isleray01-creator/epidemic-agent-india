@@ -11,37 +11,60 @@ logger = logging.getLogger(__name__)
 
 class LLMClient:
     def __init__(self):
-        self._model = None
+        self._client = None
+        self._model = "gemini-3.6-flash"
         self._initialize()
 
     def _initialize(self):
-        if settings.gemini_api_key:
-            try:
-                from langchain_google_genai import ChatGoogleGenerativeAI
-                self._model = ChatGoogleGenerativeAI(
-                    model="gemini-1.5-flash",
-                    google_api_key=settings.gemini_api_key,
-                    temperature=0.3,
-                    max_output_tokens=2048,
-                )
-                logger.info("Initialized Gemini 1.5 Flash via langchain")
-            except ImportError:
-                logger.warning("langchain-google-genai not installed")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Gemini: {e}")
+        if not settings.gemini_api_key:
+            logger.warning("No GEMINI_API_KEY set")
+            return
+
+        try:
+            from google import genai
+            self._client = genai.Client(api_key=settings.gemini_api_key)
+            logger.info(f"Initialized Gemini client with model {self._model}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Gemini: {e}")
 
     @property
     def available(self) -> bool:
-        return self._model is not None
+        return self._client is not None
 
     def invoke(self, messages: list) -> str:
         if not self.available:
-            raise RuntimeError("No LLM available - Gemini not initialized")
+            raise RuntimeError("No LLM available - GEMINI_API_KEY not set or invalid")
+
+        system_msg = ""
+        user_parts = []
+        for m in messages:
+            if hasattr(m, "type"):
+                if m.type == "system":
+                    system_msg = m.content
+                else:
+                    user_parts.append(m.content)
+            elif isinstance(m, dict):
+                role = m.get("role", "user")
+                content = m.get("content", "")
+                if role == "system":
+                    system_msg = content
+                else:
+                    user_parts.append(content)
+            else:
+                user_parts.append(str(m))
+
+        prompt = "\n\n".join(user_parts)
+        if system_msg:
+            prompt = f"{system_msg}\n\n{prompt}"
+
         try:
-            response = self._model.invoke(messages)
-            return response.content
+            response = self._client.models.generate_content(
+                model=self._model,
+                contents=prompt,
+            )
+            return response.text
         except Exception as e:
-            logger.error(f"LLM call failed: {e}")
+            logger.error(f"Gemini call failed: {e}")
             raise
 
     def invoke_json(self, messages: list) -> dict[str, Any]:

@@ -61,7 +61,13 @@ def simulate_spread(
     population = max(1, int(population))
 
     variant_params = get_variant_params(variant)
-    state_populations = {s: get_state_population(s) for s in states}
+    state_populations = {}
+    for s in states:
+        pop = get_state_population(s)
+        if pop > 0:
+            state_populations[s] = pop
+    if not state_populations:
+        state_populations = {states[0]: population}
     base_params = {
         "R0": variant_params["R0"],
         "IFR": variant_params["IFR"],

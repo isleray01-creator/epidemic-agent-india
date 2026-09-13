@@ -81,6 +81,13 @@ class LLMReasoner:
         situation = self._build_situation_summary(state)
         history_text = json.dumps(history[-5:], indent=2) if history else "No prior history"
 
+        rag_context = state.get("historical_context", [])
+        if rag_context:
+            rag_text = json.dumps(rag_context[:3], indent=2, default=str)
+            situation["rag_memory"] = json.loads(rag_text) if rag_text else []
+        else:
+            situation["rag_memory"] = []
+
         prompt = REASONING_PROMPT.format(
             situation_json=json.dumps(situation, indent=2, default=str),
             history_json=history_text,

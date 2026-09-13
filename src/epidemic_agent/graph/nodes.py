@@ -90,31 +90,42 @@ def analyze_situation(state: EpidemicState) -> EpidemicState:
             try:
                 import pandas as pd
                 from ..simulation.variant import VariantParameterLearner
+                import concurrent.futures
 
                 df = pd.DataFrame(epidemic_data)
                 learner = VariantParameterLearner()
 
-                for s in states:
-                    state_df = df[df["state"] == s].sort_values("date")
+                def _learn_variant(state_name):
+                    state_df = df[df["state"] == state_name].sort_values("date")
                     if len(state_df) < 14:
-                        continue
-
+                        return state_name, None
                     cases = state_df["confirmed"].fillna(0)
                     deaths = state_df["deceased"].fillna(0)
-
                     params = learner.learn_from_wave(
                         cases=cases,
                         deaths=deaths,
-                        population=state["population"].get(s, 1_000_000),
+                        population=state["population"].get(state_name, 1_000_000),
                     )
                     matched = learner.match_known_variant(params)
-                    learned_params[s] = {
+                    return state_name, {
                         "R0": params.R0,
                         "IFR": params.IFR,
                         "immune_escape": params.immune_escape,
                         "serial_interval": params.serial_interval,
                         "matched_variant": matched,
                     }
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    futures = {executor.submit(_learn_variant, s): s for s in states}
+                    for future in concurrent.futures.as_completed(futures, timeout=15):
+                        try:
+                            s_name, s_params = future.result()
+                            if s_params:
+                                learned_params[s_name] = s_params
+                        except concurrent.futures.TimeoutError:
+                            logger.warning(f"Variant learning timed out after 15s, skipping")
+                        except Exception as e:
+                            logger.warning(f"Variant learning failed: {e}")
             except Exception as e:
                 logger.warning(f"Variant learning failed: {e}")
 
@@ -252,6 +263,7 @@ def llm_reasoning(state: EpidemicState) -> EpidemicState:
         "active_variants": state["active_variants"],
         "healthcare_capacity": state["healthcare_capacity"],
         "cumulative_cases": state.get("cumulative_cases", {}),
+        "historical_context": state.get("metadata", {}).get("historical_context", []),
     }
 
     history = state.get("metadata", {}).get("reasoning_history", [])

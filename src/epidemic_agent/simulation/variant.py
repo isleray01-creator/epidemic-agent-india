@@ -37,6 +37,7 @@ class VariantParameterLearner:
         vaccination: pd.Series = None,
         population: int = 1_000_000,
         initial_guess: dict[str, float] = None,
+        maxiter: int = 50,
     ) -> VariantParams:
         if len(cases) < 14:
             logger.warning("Insufficient data for variant learning (< 14 days)")
@@ -139,7 +140,7 @@ class VariantParameterLearner:
             objective,
             bounds,
             seed=42,
-            maxiter=200,
+            maxiter=maxiter,
             tol=1e-8,
             popsize=15,
             mutation=(0.5, 1.0),
