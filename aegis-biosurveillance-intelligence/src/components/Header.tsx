@@ -15,6 +15,7 @@ interface HeaderProps {
   onOpenAuth: () => void;
   onPrintReport: () => void;
   onToggleMobileMenu?: () => void;
+  backendConnected?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -24,6 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAuth,
   onPrintReport,
   onToggleMobileMenu,
+  backendConnected = false,
 }) => {
   return (
     <header className="no-print sticky top-0 left-0 right-0 h-16 bg-white/95 backdrop-blur-md z-40 border-b border-slate-200/80 shadow-2xs">
@@ -59,8 +61,20 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Right Section: Export PDF + User Profile */}
+        {/* Right Section: Backend Status + Export PDF + User Profile */}
         <div className="flex items-center gap-3">
+          {/* Backend Connection Status */}
+          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border ${
+            backendConnected
+              ? 'bg-teal-50 text-teal-700 border-teal-200/70'
+              : 'bg-slate-50 text-slate-500 border-slate-200/70'
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${backendConnected ? 'bg-teal-600' : 'bg-slate-400'}`} />
+            <span className="text-[10px] font-headline font-bold uppercase tracking-wider hidden sm:inline">
+              {backendConnected ? 'PYTHON BACKEND' : 'CLIENT MODE'}
+            </span>
+          </div>
+
           {/* Export PDF Button */}
           <button
             type="button"

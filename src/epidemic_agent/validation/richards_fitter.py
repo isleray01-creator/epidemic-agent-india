@@ -128,6 +128,34 @@ def _clean_daily_cases(daily_cases: np.ndarray) -> np.ndarray:
     return clean
 
 
+def _smooth_for_comparison(data: np.ndarray, window: int = 7) -> np.ndarray:
+    """7-day rolling average for stable comparison against noisy daily data."""
+    if len(data) < window:
+        return data.copy()
+    kernel = np.ones(window) / window
+    smoothed = np.convolve(data.astype(float), kernel, mode="same")
+    return np.maximum(smoothed, 0)
+
+
+def _symmetric_mape(real: np.ndarray, pred: np.ndarray, cap: float = 100.0) -> float:
+    """Symmetric MAPE (sMAPE) with denominator cap to prevent explosion on low-count days.
+    sMAPE = mean(|real - pred| / (|real| + |pred| + cap) * 2)
+    Bounded between 0 and 2 (we report as 0-100%).
+    """
+    denom = np.abs(real) + np.abs(pred) + cap
+    return float(np.mean(np.abs(real - pred) / denom) * 2.0)
+
+
+def _weighted_mape(real: np.ndarray, pred: np.ndarray, min_real: float = 50.0) -> float:
+    """MAPE weighted by real values — low-count days contribute less."""
+    mask = real > 0
+    if not mask.any():
+        return 0.0
+    weights = np.clip(real[mask] / max(np.median(real[mask]), 1), 0.1, 5.0)
+    errors = np.abs((real[mask] - pred[mask]) / np.maximum(real[mask], min_real))
+    return float(np.average(errors, weights=weights))
+
+
 class RichardsFitter:
     """Ensemble fitter: log-normal, Gaussian, sigmoid with automatic model selection."""
 
@@ -225,8 +253,25 @@ class RichardsFitter:
         return 1.0 - (ss_res / max(ss_tot, 1e-10))
 
     def _compute_daily_error(self, real: np.ndarray, pred: np.ndarray) -> float:
-        daily_scale = max(np.percentile(real[real > 0], 50) if np.any(real > 0) else 1, 1)
-        return np.mean(((pred - real) / daily_scale) ** 2)
+        """Tukey biweight loss — robust to outliers (reporting spikes/drops)."""
+        residual = np.abs(pred - real)
+        scale = max(np.percentile(real[real > 0], 50) if np.any(real > 0) else 1, 1)
+        scaled = residual / scale
+        c = 4.0  # Tukey constant
+        mask = scaled <= c
+        error = np.where(
+            mask,
+            (c ** 2 / 6) * (1 - (1 - (scaled / c) ** 2) ** 3),
+            c ** 2 / 6,
+        )
+        return float(np.mean(error))
+
+    @staticmethod
+    def _compute_log_error(real: np.ndarray, pred: np.ndarray) -> float:
+        """Log-space error — treats relative errors equally across magnitudes."""
+        r = np.maximum(real, 1.0)
+        p = np.maximum(pred, 1.0)
+        return float(np.mean((np.log1p(p) - np.log1p(r)) ** 2))
 
     def _compute_bic(self, real: np.ndarray, pred: np.ndarray, n_params: int) -> float:
         n = len(real)
@@ -324,6 +369,7 @@ class RichardsFitter:
 
     def _fit_lognormal(self, daily_cases, t, total_cases, days, maxiter):
         peak_day = int(np.argmax(daily_cases))
+        smoothed = _smooth_for_comparison(daily_cases)
 
         def objective(params):
             A, mu, sigma = params
@@ -337,16 +383,17 @@ class RichardsFitter:
             if np.sum(pred) < 1:
                 return 1e10
 
-            daily_err = self._compute_daily_error(daily_cases, pred)
+            daily_err = self._compute_daily_error(smoothed, pred)
+            log_err = self._compute_log_error(smoothed, pred)
             pred_cum = np.cumsum(pred)
-            real_cum = np.cumsum(daily_cases)
+            real_cum = np.cumsum(smoothed)
             cum_err = np.mean(((pred_cum - real_cum) / max(real_cum[-1], 1)) ** 2)
-            peak_err = ((np.max(pred) - np.max(daily_cases)) / max(np.max(daily_cases), 1)) ** 2
+            peak_err = ((np.max(pred) - np.max(smoothed)) / max(np.max(smoothed), 1)) ** 2
             timing_err = ((int(np.argmax(pred)) - peak_day) / max(days, 1)) ** 2
             total_err = ((np.sum(pred) - total_cases) / max(total_cases, 1)) ** 2
             sigma_penalty = 0.05 * max(0, sigma - 1.5) ** 2
 
-            return cum_err + 3.0 * daily_err + 2.0 * peak_err + 3.0 * timing_err + 2.0 * total_err + sigma_penalty
+            return daily_err + 2.0 * log_err + cum_err + 2.0 * peak_err + 3.0 * timing_err + 2.0 * total_err + sigma_penalty
 
         bounds = [
             (total_cases * 0.1, total_cases * 20),
@@ -368,6 +415,7 @@ class RichardsFitter:
     def _fit_gaussian(self, daily_cases, t, total_cases, days, maxiter):
         peak_day = int(np.argmax(daily_cases))
         peak_val = np.max(daily_cases)
+        smoothed = _smooth_for_comparison(daily_cases)
 
         def objective(params):
             A, mu, sigma = params
@@ -378,12 +426,13 @@ class RichardsFitter:
             if np.sum(pred) < 1:
                 return 1e10
 
-            daily_err = self._compute_daily_error(daily_cases, pred)
-            peak_err = ((np.max(pred) - peak_val) / max(peak_val, 1)) ** 2
+            daily_err = self._compute_daily_error(smoothed, pred)
+            log_err = self._compute_log_error(smoothed, pred)
+            peak_err = ((np.max(pred) - np.max(smoothed)) / max(np.max(smoothed), 1)) ** 2
             timing_err = ((int(np.argmax(pred)) - peak_day) / max(days, 1)) ** 2
             total_err = ((np.sum(pred) - total_cases) / max(total_cases, 1)) ** 2
 
-            return daily_err + 2.0 * peak_err + 3.0 * timing_err + 2.0 * total_err
+            return daily_err + 2.0 * log_err + 2.0 * peak_err + 3.0 * timing_err + 2.0 * total_err
 
         bounds = [
             (peak_val * 0.1, peak_val * 10),
@@ -405,6 +454,7 @@ class RichardsFitter:
     def _fit_sigmoid(self, daily_cases, t, total_cases, days, maxiter):
         cum_cases = np.cumsum(daily_cases)
         peak_day = int(np.argmax(daily_cases))
+        smoothed = _smooth_for_comparison(daily_cases)
 
         def objective(params):
             K, r, t0 = params
@@ -414,10 +464,11 @@ class RichardsFitter:
             pred_daily = np.maximum(np.diff(pred_cum, prepend=0), 0)
 
             cum_err = np.mean(((pred_cum - cum_cases) / max(cum_cases[-1], 1)) ** 2)
-            daily_err = self._compute_daily_error(daily_cases, pred_daily)
-            peak_err = ((np.max(pred_daily) - np.max(daily_cases)) / max(np.max(daily_cases), 1)) ** 2
+            daily_err = self._compute_daily_error(smoothed, pred_daily)
+            log_err = self._compute_log_error(smoothed, pred_daily)
+            peak_err = ((np.max(pred_daily) - np.max(smoothed)) / max(np.max(smoothed), 1)) ** 2
 
-            return cum_err + 3.0 * daily_err + 2.0 * peak_err
+            return cum_err + 3.0 * daily_err + 2.0 * log_err + 2.0 * peak_err
 
         bounds = [
             (total_cases * 0.5, total_cases * 3),
@@ -439,6 +490,7 @@ class RichardsFitter:
     def _fit_richards(self, daily_cases, t, total_cases, days, maxiter):
         cum_cases = np.cumsum(daily_cases)
         peak_day = int(np.argmax(daily_cases))
+        smoothed = _smooth_for_comparison(daily_cases)
 
         def objective(params):
             K, r, t0, alpha = params
@@ -448,11 +500,12 @@ class RichardsFitter:
             pred_daily = np.maximum(np.diff(pred_cum, prepend=0), 0)
 
             cum_err = np.mean(((pred_cum - cum_cases) / max(cum_cases[-1], 1)) ** 2)
-            daily_err = self._compute_daily_error(daily_cases, pred_daily)
-            peak_err = ((np.max(pred_daily) - np.max(daily_cases)) / max(np.max(daily_cases), 1)) ** 2
+            daily_err = self._compute_daily_error(smoothed, pred_daily)
+            log_err = self._compute_log_error(smoothed, pred_daily)
+            peak_err = ((np.max(pred_daily) - np.max(smoothed)) / max(np.max(smoothed), 1)) ** 2
             timing_err = ((int(np.argmax(pred_daily)) - peak_day) / max(days, 1)) ** 2
 
-            return cum_err + 3.0 * daily_err + 2.0 * peak_err + 3.0 * timing_err
+            return cum_err + 3.0 * daily_err + 2.0 * log_err + 2.0 * peak_err + 3.0 * timing_err
 
         bounds = [
             (total_cases * 0.5, total_cases * 3),
@@ -474,6 +527,8 @@ class RichardsFitter:
 
     def _fit_multi_wave(self, daily_cases, t, total_cases, days, n_waves, wave_peaks, maxiter):
         try:
+            smoothed = _smooth_for_comparison(daily_cases)
+
             def objective(params):
                 wave_params = []
                 for i in range(n_waves):
@@ -494,11 +549,12 @@ class RichardsFitter:
                 if np.sum(pred) < 1:
                     return 1e10
 
-                daily_err = self._compute_daily_error(daily_cases, pred)
-                peak_err = ((np.max(pred) - np.max(daily_cases)) / max(np.max(daily_cases), 1)) ** 2
+                daily_err = self._compute_daily_error(smoothed, pred)
+                log_err = self._compute_log_error(smoothed, pred)
+                peak_err = ((np.max(pred) - np.max(smoothed)) / max(np.max(smoothed), 1)) ** 2
                 total_err = ((np.sum(pred) - total_cases) / max(total_cases, 1)) ** 2
 
-                return daily_err + 2.0 * peak_err + 2.0 * total_err
+                return daily_err + 2.0 * log_err + 2.0 * peak_err + 2.0 * total_err
 
             bounds = []
             for i in range(n_waves):

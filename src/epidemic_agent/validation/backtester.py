@@ -11,7 +11,7 @@ import pandas as pd
 import requests
 
 from ..config import INDIA_STATE_CODES, VARIANT_PARAMS, get_state_population
-from .richards_fitter import RichardsFitter, RichardsParams, _clean_daily_cases
+from .richards_fitter import RichardsFitter, RichardsParams, _clean_daily_cases, _smooth_for_comparison, _symmetric_mape, _weighted_mape
 
 logger = logging.getLogger(__name__)
 
@@ -145,11 +145,8 @@ class Backtester:
         mae = float(np.mean(np.abs(r - s)))
         rmse = float(np.sqrt(np.mean((r - s) ** 2)))
 
-        mask = r > 0
-        if mask.any():
-            mape = float(np.mean(np.abs((r[mask] - s[mask]) / r[mask])))
-        else:
-            mape = 0.0
+        r_smooth = _smooth_for_comparison(r)
+        mape = _symmetric_mape(r_smooth, s)
 
         ss_res = np.sum((r - s) ** 2)
         ss_tot = np.sum((r - np.mean(r)) ** 2)

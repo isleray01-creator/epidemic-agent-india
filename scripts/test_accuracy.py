@@ -36,11 +36,10 @@ def main():
         print(f"  Variant: {wave_data['variant']}")
         print(f"  Period: {wave_data['period']}")
         print(f"  States: {wave_data['states_tested']}")
-        print(f"  Avg MAE: {wave_data['avg_MAE']}")
-        print(f"  Avg RMSE: {wave_data['avg_RMSE']}")
-        print(f"  Avg R-squared: {wave_data['avg_R_squared']}")
-        print(f"  Avg Correlation: {wave_data['avg_correlation']}")
-        print(f"  Avg MAPE: {wave_data['avg_MAPE']}")
+        print(f"  In-sample R2: {wave_data['in_sample_R2']}")
+        print(f"  Out-of-sample R2: {wave_data['out_of_sample_R2']}")
+        print(f"  Correlation: {wave_data['correlation']}")
+        print(f"  MAPE (sMAPE): {wave_data['MAPE']}")
 
     overall = results["summary"]["overall"]
     print()
@@ -48,9 +47,13 @@ def main():
     print("OVERALL ACCURACY SUMMARY")
     print("=" * 60)
     print(f"  Total backtests: {overall['total_backtests']}")
-    print(f"  Avg R-squared: {overall['avg_R_squared']}")
-    print(f"  Avg Correlation: {overall['avg_correlation']}")
-    print(f"  Avg MAPE: {overall['avg_MAPE']}")
+    print(f"  In-sample R2: {overall['in_sample_R_squared']}")
+    print(f"  In-sample Correlation: {overall['in_sample_correlation']}")
+    print(f"  Out-of-sample Correlation: {overall['out_of_sample_correlation']}")
+    print(f"  MAPE (sMAPE): {overall['MAPE']}")
+    print(f"  Total Cases Error: {overall['total_cases_error']}")
+    print(f"  Total Deaths Error: {overall['total_deaths_error']}")
+    print(f"  Overfitting Gap: {overall['overfitting_gap']}")
     print(f"  Accuracy Rating: {overall['accuracy_rating']}")
 
     print()
@@ -58,11 +61,10 @@ def main():
     for r in results["results"]:
         m = r.metrics
         print(f"\n  {r.state} ({r.variant}, {r.period}):")
-        print(f"    Learned R0: {r.learned_R0:.2f} (actual: {r.actual_R0})")
         print(f"    Learned IFR: {r.learned_IFR:.4f} (actual: {r.actual_IFR})")
         print(f"    R-squared: {m.r_squared:.4f}")
         print(f"    Correlation: {m.correlation:.4f}")
-        print(f"    MAPE: {m.mape:.1%}")
+        print(f"    MAPE (sMAPE): {m.mape:.1%}")
         print(f"    Peak timing error: {m.peak_timing_error} days")
         print(f"    Peak magnitude error: {m.peak_magnitude_error:.1%}")
         print(f"    Total deaths error: {m.total_deaths_error:.1%}")
@@ -77,9 +79,7 @@ def main():
                 "variant": r.variant,
                 "period": r.period,
                 "metrics": r.metrics.summary(),
-                "learned_R0": r.learned_R0,
                 "learned_IFR": r.learned_IFR,
-                "actual_R0": r.actual_R0,
                 "actual_IFR": r.actual_IFR,
             }
             for r in results["results"]
@@ -88,7 +88,7 @@ def main():
     report_path.write_text(json.dumps(report, indent=2))
     print(f"\nFull report saved to: {report_path}")
 
-    return overall["avg_R_squared"]
+    return overall["in_sample_R_squared"]
 
 
 if __name__ == "__main__":

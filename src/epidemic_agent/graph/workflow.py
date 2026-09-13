@@ -13,6 +13,7 @@ from .nodes import (
     detect_shocks,
     evaluate_objective,
     finalize_recommendation,
+    human_approval_gate,
     implement_or_adapt,
     llm_reasoning,
     multi_agent_debate,
@@ -35,6 +36,7 @@ class EpidemicWorkflow:
         workflow.add_node("llm_reasoning", llm_reasoning)
         workflow.add_node("multi_agent_debate", multi_agent_debate)
         workflow.add_node("select_interventions", select_interventions)
+        workflow.add_node("human_approval_gate", human_approval_gate)
         workflow.add_node("simulate_outcomes", simulate_outcomes)
         workflow.add_node("evaluate_objective", evaluate_objective)
         workflow.add_node("implement_or_adapt", implement_or_adapt)
@@ -46,7 +48,8 @@ class EpidemicWorkflow:
         workflow.add_edge("detect_shocks", "llm_reasoning")
         workflow.add_edge("llm_reasoning", "multi_agent_debate")
         workflow.add_edge("multi_agent_debate", "select_interventions")
-        workflow.add_edge("select_interventions", "simulate_outcomes")
+        workflow.add_edge("select_interventions", "human_approval_gate")
+        workflow.add_edge("human_approval_gate", "simulate_outcomes")
         workflow.add_edge("simulate_outcomes", "evaluate_objective")
         workflow.add_edge("evaluate_objective", "implement_or_adapt")
 

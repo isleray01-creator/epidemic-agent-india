@@ -60,3 +60,4 @@ htmlcov/
 session-*.md
 New Empty File
 src/__init__.py
+data/memory/

@@ -64,60 +64,59 @@ def analyze_situation(state: EpidemicState) -> EpidemicState:
 
     current_day = state["current_day"]
     states = state["states"]
+    skip_fetch = state.get("metadata", {}).get("skip_data_fetch", False)
 
-    try:
-        data_result = fetch_epidemic_data.invoke({
-            "states": states,
-            "days_back": 90,
-            "metrics": ["cases", "deaths", "tests", "vaccination"],
-        })
-    except Exception as e:
-        logger.warning(f"Failed to fetch epidemic data: {e}")
-        data_result = {"data": []}
-
-    try:
-        demographics = fetch_demographics.invoke({"states": states})
-    except Exception as e:
-        logger.warning(f"Failed to fetch demographics: {e}")
-        demographics = {"demographics": {}}
-
-    epidemic_data = data_result.get("data", [])
-
+    epidemic_data = []
+    demographics = {"demographics": {}}
     learned_params = {}
-    if epidemic_data:
+
+    if not skip_fetch:
         try:
-            import pandas as pd
-            from ..simulation.variant import VariantParameterLearner
-
-            df = pd.DataFrame(epidemic_data)
-            learner = VariantParameterLearner()
-
-            for s in states:
-                state_df = df[df["state"] == s].sort_values("date")
-                if len(state_df) < 14:
-                    continue
-
-                cases = state_df["confirmed"].fillna(0)
-                deaths = state_df["deceased"].fillna(0)
-                vaccination = None
-
-                params = learner.learn_from_wave(
-                    cases=cases,
-                    deaths=deaths,
-                    vaccination=vaccination,
-                    population=state["population"].get(s, 1_000_000),
-                )
-                matched = learner.match_known_variant(params)
-                learned_params[s] = {
-                    "R0": params.R0,
-                    "IFR": params.IFR,
-                    "immune_escape": params.immune_escape,
-                    "serial_interval": params.serial_interval,
-                    "matched_variant": matched,
-                }
-                logger.info(f"Learned params for {s}: R0={params.R0:.2f}, matched={matched}")
+            data_result = fetch_epidemic_data.invoke({
+                "states": states,
+                "days_back": 90,
+                "metrics": ["cases", "deaths", "tests", "vaccination"],
+            })
+            epidemic_data = data_result.get("data", [])
         except Exception as e:
-            logger.warning(f"Variant learning failed: {e}")
+            logger.warning(f"Failed to fetch epidemic data: {e}")
+
+        try:
+            demographics = fetch_demographics.invoke({"states": states})
+        except Exception as e:
+            logger.warning(f"Failed to fetch demographics: {e}")
+
+        if epidemic_data:
+            try:
+                import pandas as pd
+                from ..simulation.variant import VariantParameterLearner
+
+                df = pd.DataFrame(epidemic_data)
+                learner = VariantParameterLearner()
+
+                for s in states:
+                    state_df = df[df["state"] == s].sort_values("date")
+                    if len(state_df) < 14:
+                        continue
+
+                    cases = state_df["confirmed"].fillna(0)
+                    deaths = state_df["deceased"].fillna(0)
+
+                    params = learner.learn_from_wave(
+                        cases=cases,
+                        deaths=deaths,
+                        population=state["population"].get(s, 1_000_000),
+                    )
+                    matched = learner.match_known_variant(params)
+                    learned_params[s] = {
+                        "R0": params.R0,
+                        "IFR": params.IFR,
+                        "immune_escape": params.immune_escape,
+                        "serial_interval": params.serial_interval,
+                        "matched_variant": matched,
+                    }
+            except Exception as e:
+                logger.warning(f"Variant learning failed: {e}")
 
     situation = {
         "day": current_day,
@@ -132,10 +131,13 @@ def analyze_situation(state: EpidemicState) -> EpidemicState:
     }
 
     try:
-        similar = _get_memory().query_similar(
-            situation_summary=f"Day {current_day}: {sum(state['infected'].values())} cases across {len(states)} states",
-            n_results=3,
-        )
+        if not skip_fetch:
+            similar = _get_memory().query_similar(
+                situation_summary=f"Day {current_day}: {sum(state['infected'].values())} cases across {len(states)} states",
+                n_results=3,
+            )
+        else:
+            similar = []
     except Exception as e:
         logger.warning(f"Memory query failed: {e}")
         similar = []
@@ -143,6 +145,12 @@ def analyze_situation(state: EpidemicState) -> EpidemicState:
     state["metadata"]["situation_analysis"] = situation
     state["metadata"]["historical_context"] = similar
     state["metadata"]["last_analysis_day"] = current_day
+
+    try:
+        if not skip_fetch:
+            integrate_backtester_accuracy(state)
+    except Exception as e:
+        logger.warning(f"Backtester accuracy integration skipped: {e}")
 
     return state
 
@@ -429,6 +437,10 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
 def simulate_outcomes(state: EpidemicState) -> EpidemicState:
     logger.info(f"Day {state['current_day']}: Simulating outcomes")
 
+    if state["metadata"].get("awaiting_human_approval"):
+        logger.info("Human approval pending — skipping simulation")
+        return state
+
     all_policies = list(state["current_policies"].values())
     if all_policies:
         interventions = list(set().union(*all_policies))
@@ -443,7 +455,7 @@ def simulate_outcomes(state: EpidemicState) -> EpidemicState:
     total_population = min(sum(state["population"].values()), 1_000_000)
 
     sim_result = simulate_spread.invoke({
-        "model_type": "mesa",
+        "model_type": "seir",
         "states": state["states"],
         "variant": variant,
         "days": SIMULATION_DAYS_PER_STEP,
@@ -634,3 +646,94 @@ def _generate_rationale(state: EpidemicState) -> str:
     parts.append(f"Objective value: {state['objective_value']:.4f} (confidence: {state['confidence_score']:.2f})")
 
     return " | ".join(parts)
+
+
+def human_approval_gate(state: EpidemicState) -> EpidemicState:
+    """Pauses workflow for human approval of proposed interventions.
+    Sets metadata flags that the API layer checks to pause/resume.
+    """
+    logger.info(f"Day {state['current_day']}: Human approval gate")
+
+    all_policies = list(state["current_policies"].values())
+    interventions = list(set().union(*all_policies)) if all_policies else []
+
+    state["metadata"]["awaiting_human_approval"] = True
+    state["metadata"]["proposed_interventions"] = interventions
+    state["metadata"]["approval_timestamp"] = None
+    state["metadata"]["human_modifications"] = {}
+
+    logger.info(f"Awaiting human approval for: {interventions}")
+    return state
+
+
+def approve_human_interventions(state: EpidemicState, approved_interventions: list[str] = None,
+                                 human_notes: str = "") -> EpidemicState:
+    """Called by the API when human approves/modifies interventions.
+    Updates state with approved interventions and clears the approval flag.
+    """
+    if approved_interventions is not None:
+        for s in state["states"]:
+            state["current_policies"][s] = approved_interventions
+
+    state["metadata"]["awaiting_human_approval"] = False
+    state["metadata"]["human_approved"] = True
+    state["metadata"]["human_notes"] = human_notes
+    state["metadata"]["approval_timestamp"] = datetime.now().isoformat()
+
+    logger.info(f"Human approved interventions: {approved_interventions}")
+    return state
+
+
+def integrate_backtester_accuracy(state: EpidemicState) -> EpidemicState:
+    """Adjusts confidence score based on historical backtest accuracy.
+    Called during analyze_situation to calibrate confidence against known model performance.
+    """
+    try:
+        from ..validation.backtester import Backtester
+        from ..config import VARIANT_PARAMS
+
+        backtester = Backtester()
+        variant = state["active_variants"].get(state["states"][0], "wildtype") if state["active_variants"] else "wildtype"
+
+        variant_params = VARIANT_PARAMS.get(variant, VARIANT_PARAMS["wildtype"])
+
+        total_r2 = 0.0
+        total_corr = 0.0
+        n_states = 0
+
+        for s in state["states"][:3]:
+            try:
+                result = backtester.backtest_state(
+                    state=s, variant=variant,
+                    start_date="2021-04-01", end_date="2021-06-30",
+                    run_cv=False,
+                )
+                if result.metrics.r_squared != 0 or result.metrics.correlation != 0:
+                    total_r2 += result.metrics.r_squared
+                    total_corr += result.metrics.correlation
+                    n_states += 1
+            except Exception:
+                pass
+
+        if n_states > 0:
+            avg_r2 = total_r2 / n_states
+            avg_corr = total_corr / n_states
+
+            accuracy_factor = max(0.5, min(1.0, (avg_r2 + avg_corr) / 2 + 0.5))
+            state["confidence_score"] = min(state["confidence_score"], accuracy_factor)
+
+            state["metadata"]["backtester_accuracy"] = {
+                "avg_r2": round(avg_r2, 4),
+                "avg_correlation": round(avg_corr, 4),
+                "accuracy_factor": round(accuracy_factor, 4),
+                "states_evaluated": n_states,
+            }
+            logger.info(f"Backtester accuracy: R2={avg_r2:.3f}, Corr={avg_corr:.3f}, factor={accuracy_factor:.3f}")
+        else:
+            state["metadata"]["backtester_accuracy"] = {"avg_r2": 0, "avg_correlation": 0, "accuracy_factor": 0.75, "states_evaluated": 0}
+
+    except Exception as e:
+        logger.warning(f"Backtester integration failed: {e}")
+        state["metadata"]["backtester_accuracy"] = {"error": str(e)}
+
+    return state

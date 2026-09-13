@@ -127,6 +127,7 @@ def run_workflow(req: WorkflowRequest):
         from epidemic_agent.graph.workflow import get_workflow
         from epidemic_agent.state import EpidemicState
         from epidemic_agent.config import get_state_population, settings
+        import signal
 
         populations = {s: get_state_population(s) for s in req.states}
 
@@ -146,17 +147,95 @@ def run_workflow(req: WorkflowRequest):
             "current_policies": {s: req.interventions for s in req.states},
             "intervention_history": [],
             "variant_shock": None,
-            "confidence_score": 0.8,
+            "confidence_score": 1.0,
             "objective_value": 0.0,
             "objective_breakdown": {},
             "Rt_estimates": {s: 2.5 for s in req.states},
             "healthcare_capacity": {s: {"beds": 1000, "icu": 100, "ventilators": 50} for s in req.states},
             "contact_tracing_metrics": {s: {"coverage": 0.0, "delay": 0} for s in req.states},
-            "metadata": {},
+            "metadata": {"skip_data_fetch": True},
         }
 
         workflow = get_workflow()
-        final_state = workflow.run(initial_state)
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(workflow.run, initial_state)
+            try:
+                final_state = future.result(timeout=60)
+            except concurrent.futures.TimeoutError:
+                return {"success": False, "error": "Workflow timed out after 60s. Use /api/simulate/seir for faster results.", "result": None}
+
+        return {"success": True, "result": dict(final_state)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ApproveRequest(BaseModel):
+    state: dict
+    approved_interventions: list[str] = Field(default_factory=list)
+    human_notes: str = ""
+
+
+@app.post("/api/approve")
+def approve_interventions(req: ApproveRequest):
+    try:
+        from epidemic_agent.graph.nodes import approve_human_interventions
+        import copy
+
+        state = copy.deepcopy(req.state)
+        result = approve_human_interventions(
+            state,
+            approved_interventions=req.approved_interventions,
+            human_notes=req.human_notes,
+        )
+
+        workflow = get_workflow()
+        final_state = workflow.run(result)
+        return {"success": True, "result": dict(final_state)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/simulate/approved")
+def simulate_with_approved(req: SimulateRequest):
+    try:
+        from epidemic_agent.graph.nodes import approve_human_interventions
+        import copy
+        from epidemic_agent.config import get_state_population, settings
+
+        states = req.states
+        populations = {s: get_state_population(s) for s in states}
+
+        initial_state = {
+            "current_day": 0,
+            "simulation_days": req.days,
+            "country": "India",
+            "states": states,
+            "population": populations,
+            "infected": {s: req.initial_infected for s in states},
+            "exposed": {s: req.initial_infected * 2 for s in states},
+            "recovered": {s: 0 for s in states},
+            "deceased": {s: 0 for s in states},
+            "vaccinated": {s: 0 for s in states},
+            "active_variants": {s: req.variant for s in states},
+            "variant_prevalence": {s: {req.variant: 1.0} for s in states},
+            "current_policies": {s: req.interventions for s in states},
+            "intervention_history": [],
+            "variant_shock": None,
+            "confidence_score": 1.0,
+            "objective_value": 0.0,
+            "objective_breakdown": {},
+            "Rt_estimates": {s: 2.5 for s in states},
+            "healthcare_capacity": {s: {"beds": 1000, "icu": 100, "ventilators": 50} for s in states},
+            "contact_tracing_metrics": {s: {"coverage": 0.0, "delay": 0} for s in states},
+            "metadata": {},
+        }
+
+        state = approve_human_interventions(initial_state, approved_interventions=req.interventions)
+
+        workflow = get_workflow()
+        final_state = workflow.run(state)
         return {"success": True, "result": dict(final_state)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

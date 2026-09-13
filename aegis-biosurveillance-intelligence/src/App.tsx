@@ -14,6 +14,7 @@ import {
   DEFAULT_USER 
 } from './data/simulationData';
 import { calculateSEIRTrajectory } from './utils/seirModel';
+import { simulateSEIR, healthCheck } from './utils/backendApi';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { AuthModal } from './components/AuthModal';
@@ -65,6 +66,24 @@ export default function App() {
     severity: simState.severity,
     containmentEfficacy: simState.countermeasureEfficacy,
   });
+
+  // Connect to Python backend on mount
+  const [backendConnected, setBackendConnected] = useState<boolean>(false);
+  useEffect(() => {
+    const connectBackend = async () => {
+      try {
+        const health = await healthCheck();
+        if (health.status === 'ok') {
+          setBackendConnected(true);
+          console.log('Connected to Python backend:', health.backend, health.version);
+        }
+      } catch {
+        console.warn('Backend not available, using client-side simulation');
+        setBackendConnected(false);
+      }
+    };
+    connectBackend();
+  }, []);
 
   // Client-side simulation state initializes automatically
 
@@ -322,6 +341,7 @@ export default function App() {
           onOpenAuth={() => setIsAuthModalOpen(true)}
           onPrintReport={handlePrintReport}
           onToggleMobileMenu={() => setIsMobileMenuOpen(true)}
+          backendConnected={backendConnected}
         />
 
         {/* MAIN VIEW CONTAINER */}

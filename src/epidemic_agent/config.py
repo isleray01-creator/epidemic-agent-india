@@ -213,7 +213,9 @@ def get_state_population(state: str) -> int:
         "Dadra and Nagar Haveli and Daman and Diu": 600_000,
         "Andaman and Nicobar Islands": 400_000,
         "Ladakh": 300_000,
-        "Lakshadweep": 70_000,
+        "Delhi NCR": 32_000_000,
+        "Telangana & AP": 92_000_000,
+        "Assam & North East": 52_000_000,
     }
     if state not in populations:
         logger.warning(f"Unknown state '{state}', using default population 1,000,000")

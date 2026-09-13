@@ -49,6 +49,8 @@ class TestSimulator:
             "variant": "wildtype",
             "days": 14,
             "interventions": ["contact_tracing"],
+            "initial_infected": 10,
+            "population": 10000,
         })
         assert "success" in result
         if result["success"]:

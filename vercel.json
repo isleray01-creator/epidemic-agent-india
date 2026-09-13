@@ -1,6 +1,16 @@
 {
   "buildCommand": "cd aegis-biosurveillance-intelligence && npm install && npm run build",
   "outputDirectory": "aegis-biosurveillance-intelligence/dist",
-  "framework": null,
-  "installCommand": "cd aegis-biosurveillance-intelligence && npm install"
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/((?!assets/).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ]
 }
