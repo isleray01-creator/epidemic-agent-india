@@ -243,7 +243,7 @@ class Backtester:
         if run_cv and days >= 30:
             cv_metrics = fitter.rolling_window_cv(
                 real_daily_cases, population,
-                train_window=45, horizon=14, maxiter=60,
+                train_window=42, horizon=14, maxiter=60,
             )
 
         real_peak_day = int(np.argmax(real_daily_cases)) if len(real_daily_cases) > 0 else 0

@@ -51,7 +51,7 @@ class RichardsParams:
             self.ensemble_weights = {}
 
 
-def _detect_waves(daily_cases: np.ndarray, min_prominence_ratio: float = 0.10) -> list[int]:
+def _detect_waves(daily_cases: np.ndarray, min_prominence_ratio: float = 0.05) -> list[int]:
     if len(daily_cases) < 10:
         return [0]
 
@@ -285,7 +285,7 @@ class RichardsFitter:
         ric_bic = self._compute_bic(smoothed, ric_pred, 4)
         candidates.append(("richards", ric_params, ric_r2, ric_pred, ric_bic, 4))
 
-        if n_waves > 1 and n_waves <= 4 and days >= 60:
+        if n_waves > 1 and n_waves <= 4 and days >= 45:
             mw_params = self._fit_multi_wave(smoothed, t, total_cases, days, n_waves, wave_peaks, maxiter)
             if mw_params is not None:
                 mw_pred = self._predict_daily_raw(mw_params, t, days)
@@ -611,7 +611,7 @@ class RichardsFitter:
         daily_cases: np.ndarray,
         population: int,
         train_window: int = 42,
-        horizon: int = 7,
+        horizon: int = 14,
         maxiter: int = 50,
     ) -> dict[str, float]:
         daily_cases = _clean_daily_cases(daily_cases)
@@ -623,7 +623,7 @@ class RichardsFitter:
         all_corr = []
         all_mape = []
 
-        step = max(horizon, 7)
+        step = train_window + horizon
         for start in range(0, n - train_window - horizon + 1, step):
             train_data = daily_cases[start:start + train_window].astype(float)
             test_data = daily_cases[start + train_window:start + train_window + horizon].astype(float)
