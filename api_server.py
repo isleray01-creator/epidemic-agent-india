@@ -114,6 +114,7 @@ def simulate_seir(req: SimulateRequest):
             days=req.days,
             states=states,
             initial_infected=req.initial_infected,
+            state_populations=populations,
         )
         return result.to_dict()
     except Exception as e:

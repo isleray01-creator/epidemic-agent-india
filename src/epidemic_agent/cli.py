@@ -48,9 +48,6 @@ def create_parser() -> argparse.ArgumentParser:
     state_parser.add_argument("action", choices=["list", "save", "load"])
     state_parser.add_argument("--file", help="State file name")
 
-    dashboard_parser = subparsers.add_parser("dashboard", help="Launch Streamlit dashboard")
-    dashboard_parser.add_argument("--port", type=int, default=8501)
-
     return parser
 
 
@@ -213,22 +210,6 @@ def manage_state(args: argparse.Namespace) -> int:
     return 0
 
 
-def launch_dashboard(args: argparse.Namespace) -> int:
-    import os
-    import subprocess
-    dashboard_path = Path(__file__).parent / "dashboard" / "streamlit_app.py"
-    src_dir = str(Path(__file__).parent.parent)
-    env = os.environ.copy()
-    env["PYTHONPATH"] = src_dir + os.pathsep + env.get("PYTHONPATH", "")
-    cmd = ["streamlit", "run", str(dashboard_path), "--server.port", str(args.port)]
-    try:
-        subprocess.run(cmd, check=True, env=env)
-    except subprocess.CalledProcessError as e:
-        print(f"Dashboard failed: {e}")
-        return 1
-    return 0
-
-
 def main() -> int:
     parser = create_parser()
     args = parser.parse_args()
@@ -242,7 +223,6 @@ def main() -> int:
         "fetch": fetch_data,
         "learn": learn_variant,
         "state": manage_state,
-        "dashboard": launch_dashboard,
     }
 
     return commands[args.command](args)
