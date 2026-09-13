@@ -1,0 +1,22 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Temporary build scripts
+build_*.py
+extract_*.py
+parse_*.py
+write_*.py
+write_*.sh
+*_paths.py
+*_part1.py
+*_part2.py
+states_part*.json
+metadata.json
+raw_paths.json
+raw_state_paths.json
