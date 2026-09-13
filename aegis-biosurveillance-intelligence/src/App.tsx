@@ -66,6 +66,8 @@ export default function App() {
     containmentEfficacy: simState.countermeasureEfficacy,
   });
 
+  // Client-side simulation state initializes automatically
+
   // Simulation tick loop (Plague Inc progression)
   useEffect(() => {
     if (!simState.isRunning) return;
@@ -314,14 +316,10 @@ export default function App() {
       <div className="flex-1 lg:pl-72 flex flex-col min-w-0">
         {/* TOP HEADER */}
         <Header
-          currentPage={currentPage}
-          onNavigate={(page) => setCurrentPage(page)}
           selectedPathogenId={selectedPathogenId}
           onSelectPathogen={handleSelectPathogen}
-          day={simState.day}
           currentUser={currentUser}
           onOpenAuth={() => setIsAuthModalOpen(true)}
-          onOpenTerms={() => setIsTermsModalOpen(true)}
           onPrintReport={handlePrintReport}
           onToggleMobileMenu={() => setIsMobileMenuOpen(true)}
         />

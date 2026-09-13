@@ -7,7 +7,8 @@ import {
 import { IndiaMap } from '../components/IndiaMap';
 import { PlagueIncHUD } from '../components/PlagueIncHUD';
 import { SEIRGraph } from '../components/SEIRGraph';
-import { Activity, ShieldAlert, Sparkles, Building2, Train, Plane } from 'lucide-react';
+import { simulateSEIR } from '../utils/backendApi';
+import { Activity, ShieldAlert, Sparkles, Building2, Train, Plane, Cpu } from 'lucide-react';
 
 interface SimulationViewProps {
   simState: SimulationState;
@@ -39,6 +40,32 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   selectedStateId,
 }) => {
   const selectedState = simState.states.find((s) => s.id === selectedStateId) || simState.states[0];
+  const [backendLoading, setBackendLoading] = useState(false);
+  const [backendResult, setBackendResult] = useState<string | null>(null);
+
+  const handleRunBackend = async () => {
+    setBackendLoading(true);
+    setBackendResult(null);
+    try {
+      const result = await simulateSEIR({
+        states: simState.states.map(s => s.name),
+        variant: 'wildtype',
+        days: 90,
+        initial_infected: 100,
+      });
+      const totalCases = Object.values(result.cumulative_cases).reduce(
+        (sum, cases) => sum + (cases[cases.length - 1] || 0), 0
+      );
+      const totalDeaths = Object.values(result.cumulative_deaths || {}).reduce(
+        (sum, deaths) => sum + (deaths[deaths.length - 1] || 0), 0
+      );
+      setBackendResult(`Backend SEIR complete: ${totalCases.toLocaleString()} total cases, ${totalDeaths.toLocaleString()} deaths across ${Object.keys(result.cumulative_cases).length} states.`);
+    } catch (err) {
+      setBackendResult(`Backend unavailable: ${err instanceof Error ? err.message : 'Connection failed'}. Running client-side simulation.`);
+    } finally {
+      setBackendLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col w-full gap-6">
@@ -59,13 +86,34 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs font-mono bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
-          <span className="text-slate-500">DYNAMIC R(t):</span>
-          <span className={`font-extrabold text-sm ${simState.currentRt > 1.2 ? 'text-red-600' : 'text-emerald-700'}`}>
-            {simState.currentRt}
-          </span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 text-xs font-mono bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+            <span className="text-slate-500">DYNAMIC R(t):</span>
+            <span className={`font-extrabold text-sm ${simState.currentRt > 1.2 ? 'text-red-600' : 'text-emerald-700'}`}>
+              {simState.currentRt}
+            </span>
+          </div>
+          <button
+            onClick={handleRunBackend}
+            disabled={backendLoading}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition-all ${
+              backendLoading
+                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-wait'
+                : 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700 cursor-pointer'
+            }`}
+          >
+            <Cpu className={`w-3.5 h-3.5 ${backendLoading ? 'animate-spin' : ''}`} />
+            {backendLoading ? 'Running...' : 'Run Python Backend'}
+          </button>
         </div>
       </div>
+
+      {/* Backend Result Banner */}
+      {backendResult && (
+        <div className="bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 text-xs font-mono text-teal-800">
+          {backendResult}
+        </div>
+      )}
 
       {/* PLAGUE INC HUD & MUTATION / NPI CONTROLS */}
       <PlagueIncHUD

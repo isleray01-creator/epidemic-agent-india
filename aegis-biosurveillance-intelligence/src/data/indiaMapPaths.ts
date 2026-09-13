@@ -1,0 +1,106 @@
+// Coordinates and SVG paths for the 37 states & UTs in 800x900 viewport
+export interface StateMapPath {
+  id: string; // matches StateOutbreakData or SVG path id
+  name: string;
+  cx: number;
+  cy: number;
+  d: string;
+}
+
+// Map center points for each state/UT path in 800x900 viewBox
+export const STATE_CENTER_COORDS: Record<string, { cx: number; cy: number; name: string; airHub: boolean; railJunction: boolean; pop: number }> = {
+  Maharashtra: { cx: 240, cy: 535, name: 'Maharashtra', airHub: true, railJunction: true, pop: 125000000 },
+  NCT_of_Delhi: { cx: 252, cy: 258, name: 'Delhi NCR', airHub: true, railJunction: true, pop: 33000000 },
+  Karnataka: { cx: 228, cy: 672, name: 'Karnataka', airHub: true, railJunction: true, pop: 68000000 },
+  Kerala: { cx: 236, cy: 775, name: 'Kerala', airHub: true, railJunction: true, pop: 35000000 },
+  Tamil_Nadu: { cx: 295, cy: 755, name: 'Tamil Nadu', airHub: true, railJunction: true, pop: 77000000 },
+  Andhra_Pradesh: { cx: 310, cy: 640, name: 'Andhra Pradesh', airHub: true, railJunction: true, pop: 53000000 },
+  Telangana: { cx: 305, cy: 560, name: 'Telangana', airHub: true, railJunction: true, pop: 39000000 },
+  Gujarat: { cx: 125, cy: 425, name: 'Gujarat', airHub: true, railJunction: true, pop: 71000000 },
+  Rajasthan: { cx: 185, cy: 320, name: 'Rajasthan', airHub: false, railJunction: true, pop: 80000000 },
+  Madhya_Pradesh: { cx: 290, cy: 425, name: 'Madhya Pradesh', airHub: true, railJunction: true, pop: 85000000 },
+  Uttar_Pradesh: { cx: 345, cy: 315, name: 'Uttar Pradesh', airHub: true, railJunction: true, pop: 235000000 },
+  Bihar: { cx: 480, cy: 345, name: 'Bihar', airHub: true, railJunction: true, pop: 128000000 },
+  West_Bengal: { cx: 535, cy: 415, name: 'West Bengal', airHub: true, railJunction: true, pop: 99000000 },
+  Odisha: { cx: 440, cy: 495, name: 'Odisha', airHub: false, railJunction: true, pop: 46000000 },
+  Chhattisgarh: { cx: 375, cy: 485, name: 'Chhattisgarh', airHub: false, railJunction: true, pop: 30000000 },
+  Jharkhand: { cx: 470, cy: 405, name: 'Jharkhand', airHub: false, railJunction: true, pop: 39000000 },
+  Punjab: { cx: 205, cy: 195, name: 'Punjab', airHub: true, railJunction: true, pop: 30000000 },
+  Haryana: { cx: 230, cy: 245, name: 'Haryana', airHub: false, railJunction: true, pop: 29000000 },
+  Uttarakhand: { cx: 305, cy: 215, name: 'Uttarakhand', airHub: false, railJunction: false, pop: 11000000 },
+  Himachal_Pradesh: { cx: 255, cy: 165, name: 'Himachal Pradesh', airHub: false, railJunction: false, pop: 7500000 },
+  Jammu_and_Kashmir: { cx: 185, cy: 115, name: 'Jammu & Kashmir', airHub: true, railJunction: false, pop: 13500000 },
+  Ladakh: { cx: 255, cy: 75, name: 'Ladakh', airHub: false, railJunction: false, pop: 300000 },
+  Goa: { cx: 172, cy: 636, name: 'Goa', airHub: true, railJunction: true, pop: 1500000 },
+  Assam: { cx: 645, cy: 325, name: 'Assam', airHub: true, railJunction: true, pop: 36000000 },
+  Arunachal_Pradesh: { cx: 705, cy: 265, name: 'Arunachal Pradesh', airHub: false, railJunction: false, pop: 1600000 },
+  Manipur: { cx: 690, cy: 370, name: 'Manipur', airHub: false, railJunction: false, pop: 3200000 },
+  Meghalaya: { cx: 620, cy: 350, name: 'Meghalaya', airHub: false, railJunction: false, pop: 3300000 },
+  Mizoram: { cx: 660, cy: 415, name: 'Mizoram', airHub: false, railJunction: false, pop: 1250000 },
+  Nagaland: { cx: 710, cy: 325, name: 'Nagaland', airHub: false, railJunction: false, pop: 2200000 },
+  Tripura: { cx: 630, cy: 400, name: 'Tripura', airHub: false, railJunction: false, pop: 4100000 },
+  Sikkim: { cx: 546, cy: 290, name: 'Sikkim', airHub: false, railJunction: false, pop: 700000 },
+  Chandigarh: { cx: 243, cy: 200, name: 'Chandigarh', airHub: false, railJunction: true, pop: 1200000 },
+  Dadara_and_Nagar_Havelli: { cx: 147, cy: 498, name: 'Dadra & Nagar Haveli', airHub: false, railJunction: false, pop: 400000 },
+  Daman_and_Diu: { cx: 141, cy: 492, name: 'Daman & Diu', airHub: false, railJunction: false, pop: 300000 },
+  Puducherry: { cx: 318, cy: 735, name: 'Puducherry', airHub: false, railJunction: false, pop: 1500000 },
+  Andaman_and_Nicobar_Island: { cx: 665, cy: 745, name: 'Andaman & Nicobar', airHub: true, railJunction: false, pop: 420000 },
+  Lakshadweep: { cx: 135, cy: 755, name: 'Lakshadweep', airHub: false, railJunction: false, pop: 70000 },
+};
+
+// Neighboring adjacency graph for contagion propagation between states
+export const STATE_ADJACENCY_NETWORK: Record<string, string[]> = {
+  Maharashtra: ['Gujarat', 'Madhya_Pradesh', 'Chhattisgarh', 'Telangana', 'Karnataka', 'Goa'],
+  NCT_of_Delhi: ['Haryana', 'Uttar_Pradesh', 'Rajasthan'],
+  Karnataka: ['Maharashtra', 'Goa', 'Telangana', 'Andhra_Pradesh', 'Tamil_Nadu', 'Kerala'],
+  Kerala: ['Karnataka', 'Tamil_Nadu'],
+  Tamil_Nadu: ['Kerala', 'Karnataka', 'Andhra_Pradesh', 'Puducherry'],
+  Andhra_Pradesh: ['Tamil_Nadu', 'Karnataka', 'Telangana', 'Odisha', 'Chhattisgarh'],
+  Telangana: ['Maharashtra', 'Karnataka', 'Andhra_Pradesh', 'Chhattisgarh'],
+  Gujarat: ['Rajasthan', 'Madhya_Pradesh', 'Maharashtra', 'Dadara_and_Nagar_Havelli', 'Daman_and_Diu'],
+  Rajasthan: ['Punjab', 'Haryana', 'Uttar_Pradesh', 'Madhya_Pradesh', 'Gujarat'],
+  Madhya_Pradesh: ['Rajasthan', 'Uttar_Pradesh', 'Chhattisgarh', 'Maharashtra', 'Gujarat'],
+  Uttar_Pradesh: ['Uttarakhand', 'Haryana', 'NCT_of_Delhi', 'Rajasthan', 'Madhya_Pradesh', 'Bihar'],
+  Bihar: ['Uttar_Pradesh', 'Jharkhand', 'West_Bengal'],
+  West_Bengal: ['Bihar', 'Jharkhand', 'Odisha', 'Sikkim', 'Assam'],
+  Odisha: ['West_Bengal', 'Jharkhand', 'Chhattisgarh', 'Andhra_Pradesh'],
+  Chhattisgarh: ['Madhya_Pradesh', 'Maharashtra', 'Telangana', 'Andhra_Pradesh', 'Odisha', 'Jharkhand', 'Uttar_Pradesh'],
+  Jharkhand: ['Bihar', 'Uttar_Pradesh', 'Chhattisgarh', 'Odisha', 'West_Bengal'],
+  Punjab: ['Jammu_and_Kashmir', 'Himachal_Pradesh', 'Haryana', 'Rajasthan', 'Chandigarh'],
+  Haryana: ['Punjab', 'Himachal_Pradesh', 'Rajasthan', 'Uttar_Pradesh', 'NCT_of_Delhi', 'Chandigarh'],
+  Uttarakhand: ['Himachal_Pradesh', 'Uttar_Pradesh'],
+  Himachal_Pradesh: ['Jammu_and_Kashmir', 'Ladakh', 'Punjab', 'Haryana', 'Uttarakhand'],
+  Jammu_and_Kashmir: ['Ladakh', 'Himachal_Pradesh', 'Punjab'],
+  Ladakh: ['Jammu_and_Kashmir', 'Himachal_Pradesh'],
+  Goa: ['Maharashtra', 'Karnataka'],
+  Assam: ['West_Bengal', 'Meghalaya', 'Arunachal_Pradesh', 'Nagaland', 'Manipur', 'Mizoram', 'Tripura'],
+  Arunachal_Pradesh: ['Assam', 'Nagaland'],
+  Nagaland: ['Arunachal_Pradesh', 'Assam', 'Manipur'],
+  Manipur: ['Nagaland', 'Assam', 'Mizoram'],
+  Mizoram: ['Assam', 'Manipur', 'Tripura'],
+  Tripura: ['Assam', 'Mizoram'],
+  Meghalaya: ['Assam'],
+  Sikkim: ['West_Bengal'],
+  Chandigarh: ['Punjab', 'Haryana'],
+  Dadara_and_Nagar_Havelli: ['Gujarat', 'Maharashtra'],
+  Daman_and_Diu: ['Gujarat'],
+  Puducherry: ['Tamil_Nadu'],
+  Andaman_and_Nicobar_Island: ['West_Bengal', 'Tamil_Nadu'],
+  Lakshadweep: ['Kerala'],
+};
+
+// Major air / high-speed rail transit corridors
+export const INTERSTATE_TRANSIT_CORRIDORS = [
+  { from: 'Maharashtra', to: 'NCT_of_Delhi', mode: 'air_rail', name: 'Western Trunk (Mumbai ⮂ Delhi)' },
+  { from: 'Maharashtra', to: 'Karnataka', mode: 'air_rail', name: 'Deccan Express (Mumbai ⮂ Bengaluru)' },
+  { from: 'Maharashtra', to: 'Gujarat', mode: 'rail', name: 'Golden Corridor (Mumbai ⮂ Ahmedabad)' },
+  { from: 'NCT_of_Delhi', to: 'Uttar_Pradesh', mode: 'rail', name: 'Gangetic Express (Delhi ⮂ Lucknow)' },
+  { from: 'NCT_of_Delhi', to: 'West_Bengal', mode: 'air_rail', name: 'Rajdhani Eastern (Delhi ⮂ Kolkata)' },
+  { from: 'Karnataka', to: 'Tamil_Nadu', mode: 'rail', name: 'Southern Corridor (Bengaluru ⮂ Chennai)' },
+  { from: 'Kerala', to: 'Karnataka', mode: 'rail', name: 'Malabar Coastal (Kochi ⮂ Bengaluru)' },
+  { from: 'West_Bengal', to: 'Assam', mode: 'air_rail', name: 'Siliguri Gateway (Kolkata ⮂ Guwahati)' },
+  { from: 'Maharashtra', to: 'Telangana', mode: 'rail', name: 'Central Express (Mumbai ⮂ Hyderabad)' },
+  { from: 'Telangana', to: 'Andhra_Pradesh', mode: 'rail', name: 'Coastal Trunk (Hyderabad ⮂ Vizag)' },
+  { from: 'Uttar_Pradesh', to: 'Bihar', mode: 'rail', name: 'Purvanchal Trunk (Varanasi ⮂ Patna)' },
+  { from: 'Bihar', to: 'West_Bengal', mode: 'rail', name: 'Eastern Spur (Patna ⮂ Kolkata)' },
+];

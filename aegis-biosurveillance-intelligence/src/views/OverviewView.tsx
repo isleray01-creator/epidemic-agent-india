@@ -292,7 +292,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                 5x
               </button>
               <span className="text-slate-400 text-xs px-1 font-mono">
-                Day {simState.day}/60
+                Day {simState.day}/{simState.maxDays}
               </span>
             </div>
 

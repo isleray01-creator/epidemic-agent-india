@@ -13,7 +13,7 @@ interface IndiaMapProps {
 
 const getInfectionColor = (state: StateOutbreakData | undefined, isDark: boolean): string => {
   if (!state) return isDark ? '#1e293b' : '#f1f5f9';
-  const ratio = state.totalInfected / (state.population * 0.01);
+  const ratio = state.infected / (state.population * 0.01);
   if (ratio <= 0.001) return isDark ? '#064e3b' : '#d1fae5';
   if (ratio <= 0.005) return isDark ? '#047857' : '#6ee7b7';
   if (ratio <= 0.02) return isDark ? '#b45309' : '#fcd34d';
@@ -157,7 +157,7 @@ export const IndiaMap: React.FC<IndiaMapProps> = ({
                 fontSize="10"
                 fill={isDark ? '#94a3b8' : '#64748b'}
               >
-                Infected: {(hoveredState.totalInfected / 1000000).toFixed(2)}M | Rt: {hoveredState.currentRt.toFixed(2)}
+                Infected: {(((hoveredState.infected ?? hoveredState.totalInfected ?? 0) / 1000000)).toFixed(2)}M | Rt: {(hoveredState.activeRt ?? hoveredState.currentRt ?? 1.0).toFixed(2)}
               </text>
             </g>
           )}
