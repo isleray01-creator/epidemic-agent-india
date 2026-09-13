@@ -1,7 +1,7 @@
 """LLM Reasoning node - interprets simulation results and suggests policies.
 
-Uses local rule-based reasoning when no LLM API is available.
-Falls back gracefully to heuristic decision-making.
+Uses Google Gemini via langchain for actual LLM inference.
+Falls back to rule-based reasoning if LLM is unavailable.
 """
 from __future__ import annotations
 
@@ -30,6 +30,9 @@ SEVERITY_THRESHOLDS = {
     "low": {"r0": 1.5, "deaths_per_million": 2, "icu_utilization": 0.25},
 }
 
+VALID_POLICIES = set(POLICY_EFFECTIVENESS.keys())
+VALID_SEVERITIES = {"low", "medium", "high", "critical"}
+
 
 @dataclass
 class ReasoningResult:
@@ -45,7 +48,7 @@ class ReasoningResult:
 
 
 class LLMReasoner:
-    """Rule-based reasoning engine for epidemic response decisions."""
+    """LLM-powered reasoning engine using Gemini for epidemic response decisions."""
 
     def __init__(self):
         pass
@@ -61,6 +64,76 @@ class LLMReasoner:
         if failure:
             return self._handle_failure(state, failure)
 
+        try:
+            return self._reason_with_llm(state, history)
+        except Exception as e:
+            logger.warning(f"LLM reasoning failed, falling back to heuristic: {e}")
+            return self._reason_with_heuristic(state, history)
+
+    def _reason_with_llm(self, state: dict, history: list) -> ReasoningResult:
+        from ..llm.client import get_llm_client
+        from ..llm.prompts import REASONING_PROMPT
+
+        client = get_llm_client()
+        if not client.available:
+            raise RuntimeError("LLM not available")
+
+        situation = self._build_situation_summary(state)
+        history_text = json.dumps(history[-5:], indent=2) if history else "No prior history"
+
+        prompt = REASONING_PROMPT.format(
+            situation_json=json.dumps(situation, indent=2, default=str),
+            history_json=history_text,
+        )
+
+        from langchain_core.messages import HumanMessage, SystemMessage
+        from ..llm.prompts import SYSTEM_PROMPT
+
+        messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=prompt),
+        ]
+
+        raw = client.invoke_json(messages)
+
+        severity = raw.get("severity", "medium")
+        if severity not in VALID_SEVERITIES:
+            severity = "medium"
+
+        recommended = [p for p in raw.get("recommended_policies", []) if p in VALID_POLICIES][:4]
+        if not recommended:
+            recommended = ["contact_tracing", "social_distancing", "mask_mandate"]
+
+        ranking = []
+        for pr in raw.get("policy_ranking", []):
+            if isinstance(pr, dict) and pr.get("policy") in VALID_POLICIES:
+                ranking.append({
+                    "policy": pr["policy"],
+                    "score": float(pr.get("score", 0.5)),
+                    "r0_reduction": float(pr.get("r0_reduction", 0.2)),
+                    "economic_cost": float(pr.get("economic_cost", 0.5)),
+                    "lag_days": int(pr.get("lag_days", 7)),
+                })
+
+        if not ranking:
+            ranking = self._build_default_ranking(recommended, state)
+
+        confidence = float(raw.get("confidence", 0.7))
+        uncertainty = raw.get("uncertainty_factors", [])
+        rationale = raw.get("rationale", "LLM analysis completed")
+
+        logger.info(f"LLM reasoning: severity={severity}, policies={recommended}, confidence={confidence:.2f}")
+
+        return ReasoningResult(
+            severity=severity,
+            rationale=rationale,
+            recommended_policies=recommended,
+            confidence=max(0.3, min(1.0, confidence)),
+            uncertainty_factors=uncertainty[:5],
+            policy_ranking=ranking,
+        )
+
+    def _reason_with_heuristic(self, state: dict, history: list) -> ReasoningResult:
         severity = self._assess_severity(state)
         uncertainty = self._assess_uncertainty(state, history)
         policies = self._select_policies(severity, state, uncertainty)
@@ -75,6 +148,48 @@ class LLMReasoner:
             uncertainty_factors=uncertainty,
             policy_ranking=ranking,
         )
+
+    def _build_situation_summary(self, state: dict) -> dict:
+        total_infected = sum(state.get("infected", {}).values())
+        total_deceased = sum(state.get("deceased", {}).values())
+        total_pop = sum(state.get("population", {}).values())
+        rt_estimates = state.get("Rt_estimates", {})
+        max_rt = max(rt_estimates.values()) if rt_estimates else 1.0
+        avg_rt = sum(rt_estimates.values()) / len(rt_estimates) if rt_estimates else 1.0
+
+        healthcare = state.get("healthcare_capacity", {})
+        icu_total = sum(h.get("icu", 0) for h in healthcare.values())
+        beds_total = sum(h.get("beds", 0) for h in healthcare.values())
+
+        return {
+            "current_day": state.get("current_day", 0),
+            "states": state.get("states", []),
+            "active_cases": total_infected,
+            "total_deaths": total_deceased,
+            "population": total_pop,
+            "deaths_per_million": round((total_deceased / max(total_pop, 1)) * 1_000_000, 2),
+            "Rt_estimates": rt_estimates,
+            "max_Rt": round(max_rt, 2),
+            "avg_Rt": round(avg_rt, 2),
+            "active_variants": state.get("active_variants", {}),
+            "variant_prevalence": state.get("variant_prevalence", {}),
+            "healthcare": {"icu_beds": icu_total, "total_beds": beds_total},
+            "current_policies": state.get("current_policies", {}),
+            "vaccinated": state.get("vaccinated", {}),
+        }
+
+    def _build_default_ranking(self, policies: list[str], state: dict) -> list[dict]:
+        ranking = []
+        for policy in policies:
+            eff = POLICY_EFFECTIVENESS.get(policy, {})
+            ranking.append({
+                "policy": policy,
+                "score": 0.5,
+                "r0_reduction": eff.get("r0_reduction", 0.2),
+                "economic_cost": eff.get("economic_cost", 0.5),
+                "lag_days": eff.get("lag_days", 7),
+            })
+        return ranking
 
     def _detect_failure(self, state: dict[str, Any]) -> dict[str, Any] | None:
         infected = state.get("infected", {})

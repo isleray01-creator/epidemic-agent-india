@@ -132,8 +132,25 @@ def analyze_situation(state: EpidemicState) -> EpidemicState:
 
     try:
         if not skip_fetch:
+            total_infected = sum(state["infected"].values())
+            total_deceased = sum(state["deceased"].values())
+            total_pop = sum(state["population"].values())
+            rt_vals = list(state["Rt_estimates"].values())
+            max_rt = max(rt_vals) if rt_vals else 1.0
+            variants = list(set(state["active_variants"].values()))
+            severity_hint = "high" if max_rt > 4 or total_infected > 100000 else "medium" if max_rt > 2 else "low"
+
+            summary = (
+                f"Epidemic situation in India: Day {current_day}, "
+                f"{total_infected:,} active cases, {total_deceased:,} deaths, "
+                f"Rt range {min(rt_vals):.1f}-{max_rt:.1f}, "
+                f"dominant variant {', '.join(variants)}, "
+                f"severity {severity_hint}, "
+                f"healthcare strain {'high' if total_infected > 50000 else 'moderate'}, "
+                f"{len(states)} states affected: {', '.join(states)}"
+            )
             similar = _get_memory().query_similar(
-                situation_summary=f"Day {current_day}: {sum(state['infected'].values())} cases across {len(states)} states",
+                situation_summary=summary,
                 n_results=3,
             )
         else:
@@ -609,13 +626,27 @@ def finalize_recommendation(state: EpidemicState) -> EpidemicState:
     )
 
     try:
+        total_infected = sum(state["infected"].values())
+        total_deceased = sum(state["deceased"].values())
+        rt_vals = list(state["Rt_estimates"].values())
+        max_rt = max(rt_vals) if rt_vals else 1.0
+        variants = list(set(state["active_variants"].values()))
+
+        store_summary = (
+            f"Day {state['current_day']}: {total_infected:,} active cases, "
+            f"{total_deceased:,} deaths, Rt={max_rt:.1f}, "
+            f"variant={', '.join(variants)}, severity={reasoning.get('severity', 'unknown')}, "
+            f"interventions={','.join(interventions)}, "
+            f"confidence={state['confidence_score']:.2f}"
+        )
+
         _get_memory().add_decision(
             decision_id=f"decision_{state['current_day']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             day=state["current_day"],
             state=",".join(state["states"]),
-            situation_summary=f"Epidemic response decision for {state['states']}",
+            situation_summary=store_summary,
             intervention=",".join(interventions),
-            params={},
+            params={"severity": reasoning.get("severity", "unknown"), "rt": max_rt},
             predicted_outcome=predicted,
             objective_value=state["objective_value"],
             confidence=state["confidence_score"],

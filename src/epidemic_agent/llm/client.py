@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -10,66 +11,57 @@ logger = logging.getLogger(__name__)
 
 class LLMClient:
     def __init__(self):
-        self._primary = None
-        self._fallback = None
-        self._gemini_model = None
+        self._model = None
         self._initialize()
 
     def _initialize(self):
-        try:
-            from langchain_ollama import ChatOllama
-            self._primary = ChatOllama(
-                base_url=settings.ollama_base_url,
-                model=settings.ollama_model,
-                temperature=0.3,
-                num_predict=2048,
-            )
-            logger.info(f"Initialized Ollama: {settings.ollama_model}")
-        except ImportError:
-            logger.warning("langchain_ollama not installed, Ollama disabled")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Ollama: {e}")
-
         if settings.gemini_api_key:
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=settings.gemini_api_key)
-                self._gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-                logger.info("Initialized Gemini fallback")
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                self._model = ChatGoogleGenerativeAI(
+                    model="gemini-1.5-flash",
+                    google_api_key=settings.gemini_api_key,
+                    temperature=0.3,
+                    max_output_tokens=2048,
+                )
+                logger.info("Initialized Gemini 1.5 Flash via langchain")
             except ImportError:
-                logger.warning("google-generativeai not installed, Gemini disabled")
+                logger.warning("langchain-google-genai not installed")
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini: {e}")
 
     @property
-    def primary(self):
-        if self._primary is None:
-            raise RuntimeError("No primary LLM available (Ollama not running)")
-        return self._primary
+    def available(self) -> bool:
+        return self._model is not None
 
     def invoke(self, messages: list) -> str:
+        if not self.available:
+            raise RuntimeError("No LLM available - Gemini not initialized")
         try:
-            response = self.primary.invoke(messages)
+            response = self._model.invoke(messages)
             return response.content
         except Exception as e:
-            logger.warning(f"Primary LLM failed: {e}, trying fallback")
-            return self._fallback_invoke(messages)
+            logger.error(f"LLM call failed: {e}")
+            raise
 
-    def _fallback_invoke(self, messages: list) -> str:
-        if self._gemini_model:
-            try:
-                prompt = "\n".join([f"{m.type}: {m.content}" for m in messages])
-                response = self._gemini_model.generate_content(prompt)
-                return response.text
-            except Exception as e:
-                logger.error(f"Gemini fallback failed: {e}")
-
-        raise RuntimeError("All LLM backends failed")
-
-    def bind_tools(self, tools: list[Any]) -> Any:
-        if hasattr(self._primary, "bind_tools"):
-            return self._primary.bind_tools(tools)
-        return self._primary
+    def invoke_json(self, messages: list) -> dict[str, Any]:
+        raw = self.invoke(messages)
+        text = raw.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            text = "\n".join(lines)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start >= 0 and end > start:
+                try:
+                    return json.loads(text[start:end])
+                except json.JSONDecodeError:
+                    pass
+            return {"raw_response": text}
 
 
 _llm_client: LLMClient | None = None

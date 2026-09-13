@@ -31,32 +31,96 @@
       "reward": 0.183,
       "rationale": "Day 0: Severity assessed as MEDIUM. Top recommendation: Mask Mandate (score=0.16, R0 reduction=33%). Active cases: 150, deaths: 0. Uncertainty factors: Limited history - first few steps; Early simulation phase - trends unstable.",
       "confidence": 1.0
+    },
+    {
+      "day": 7,
+      "state_snapshot": {
+        "current_day": 7,
+        "total_infected": 150,
+        "total_deceased": 0,
+        "rt_estimates": {
+          "Maharashtra": 2.5,
+          "Kerala": 2.5
+        },
+        "active_variants": {
+          "Maharashtra": "wildtype",
+          "Kerala": "wildtype"
+        }
+      },
+      "policies_selected": [
+        "mask_mandate",
+        "contact_tracing",
+        "social_distancing"
+      ],
+      "severity": "medium",
+      "outcome": {
+        "deaths": 0,
+        "r0_after": 2.5,
+        "r0_reduction": 0.0,
+        "deaths_averted": 0.0,
+        "economic_cost": 3000000
+      },
+      "reward": -0.003,
+      "rationale": "Day 0: Severity assessed as MEDIUM. Top recommendation: Mask Mandate (score=0.16, R0 reduction=33%). Active cases: 150, deaths: 0. Uncertainty factors: Limited history - first few steps; Early simulation phase - trends unstable.",
+      "confidence": 1.0
+    },
+    {
+      "day": 7,
+      "state_snapshot": {
+        "current_day": 7,
+        "total_infected": 150,
+        "total_deceased": 0,
+        "rt_estimates": {
+          "Maharashtra": 2.5,
+          "Kerala": 2.5
+        },
+        "active_variants": {
+          "Maharashtra": "wildtype",
+          "Kerala": "wildtype"
+        }
+      },
+      "policies_selected": [
+        "mask_mandate",
+        "contact_tracing",
+        "social_distancing"
+      ],
+      "severity": "medium",
+      "outcome": {
+        "deaths": 0,
+        "r0_after": 2.5,
+        "r0_reduction": 0.0,
+        "deaths_averted": 0.0,
+        "economic_cost": 3000000
+      },
+      "reward": -0.003,
+      "rationale": "Day 0: Severity assessed as MEDIUM. Top recommendation: Mask Mandate (score=0.16, R0 reduction=33%). Active cases: 150, deaths: 0. Uncertainty factors: Limited history - first few steps; Early simulation phase - trends unstable.",
+      "confidence": 1.0
     }
   ],
   "policy_performance": {
     "mask_mandate": {
       "policy": "mask_mandate",
-      "times_used": 1,
-      "avg_reward": 0.183,
+      "times_used": 3,
+      "avg_reward": 0.059,
       "avg_r0_reduction": 0.0,
       "avg_deaths_averted": 0.0,
-      "success_rate": 1.0
+      "success_rate": 0.3333333333333333
     },
     "contact_tracing": {
       "policy": "contact_tracing",
-      "times_used": 1,
-      "avg_reward": 0.183,
+      "times_used": 3,
+      "avg_reward": 0.059,
       "avg_r0_reduction": 0.0,
       "avg_deaths_averted": 0.0,
-      "success_rate": 1.0
+      "success_rate": 0.3333333333333333
     },
     "social_distancing": {
       "policy": "social_distancing",
-      "times_used": 1,
-      "avg_reward": 0.183,
+      "times_used": 3,
+      "avg_reward": 0.059,
       "avg_r0_reduction": 0.0,
       "avg_deaths_averted": 0.0,
-      "success_rate": 1.0
+      "success_rate": 0.3333333333333333
     }
   }
 }

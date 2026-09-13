@@ -34,17 +34,81 @@ simulate disease spread, and recommend evidence-based interventions to minimize 
 - Large informal economy (economic weight 30%)
 - Variant history: Wildtype → Delta → Omicron BA.1/BA.2/BA.5 → XBB
 - Contact tracing feasible at 60% efficiency, 70% compliance
-- Vaccination: Covishield, Covaxin, Corbevax coverage data available
+- Vaccination: Covishield, Covaxin, Corbevax coverage data available"""
 
-## Output Format
-Always structure your response as:
-```
-THOUGHT: [Your reasoning]
-ACTION: [Tool name and parameters]
-OBSERVATION: [Tool result]
-...
-FINAL RECOMMENDATION: [Intervention with justification]
-```"""
+REASONING_PROMPT = """You are an epidemiological reasoning engine. Analyze the current epidemic situation and provide a structured assessment.
+
+CURRENT SITUATION:
+{situation_json}
+
+HISTORICAL CONTEXT:
+{history_json}
+
+Respond with a JSON object (no markdown, no code blocks) with this exact structure:
+{{
+  "severity": "low|medium|high|critical",
+  "rationale": "Detailed epidemiological reasoning (2-3 sentences)",
+  "recommended_policies": ["policy1", "policy2", "policy3"],
+  "confidence": 0.0-1.0,
+  "uncertainty_factors": ["factor1", "factor2"],
+  "policy_ranking": [
+    {{"policy": "name", "score": 0.0-1.0, "r0_reduction": 0.0-1.0, "economic_cost": 0.0-1.0, "lag_days": 7}}
+  ]
+}}
+
+Available policies: contact_tracing, lockdown, mask_mandate, vaccination_drive, enhanced_testing, travel_restrictions, social_distancing, quarantine
+
+Evaluate each policy based on:
+- R0 reduction potential for current variant
+- Economic cost (India has large informal sector)
+- Social compliance likelihood
+- Speed of impact (lag days)
+- Current severity level"""
+
+AGENT_EVAL_PROMPT = """You are a {agent_role} evaluating intervention policies for an Indian epidemic scenario.
+
+AGENT EXPERTISE: {agent_expertise}
+CURRENT SEVERITY: {severity}
+
+SITUATION:
+{situation_json}
+
+CANDIDATE POLICIES:
+{policies_json}
+
+For each policy, evaluate it from your {agent_role} perspective.
+Respond with a JSON object (no markdown, no code blocks) with this exact structure:
+{{
+  "votes": [
+    {{
+      "policy": "policy_name",
+      "support": 0.0-1.0,
+      "rationale": "1-2 sentence explanation from your expertise perspective"
+    }}
+  ]
+}}
+
+Be specific to the Indian context. Consider:
+- Population density and urban/rural divide
+- Economic impact on informal workers
+- Healthcare infrastructure constraints
+- Cultural factors affecting compliance"""
+
+DEBATE_SYNTHESIS_PROMPT = """Three agents have evaluated epidemic intervention policies for India.
+
+AGENT VOTES:
+{votes_json}
+
+SITUATION:
+{situation_json}
+
+Synthesize the debate. Respond with a JSON object (no markdown, no code blocks):
+{{
+  "consensus_policies": ["policy1", "policy2", "policy3"],
+  "agreement_score": 0.0-1.0,
+  "dissenting_opinions": ["agent X disagrees with policy Y because..."],
+  "synthesis": "2-3 sentence summary of the debate outcome and key tradeoffs"
+}}"""
 
 TOOL_PROMPTS = {
     "fetch_epidemic_data": """Fetch real-time epidemic data for Indian states.
