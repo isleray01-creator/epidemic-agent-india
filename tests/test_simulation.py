@@ -91,7 +91,7 @@ class TestSEIRModel:
         result_dict = result.to_dict()
         assert "daily_cases" in result_dict
         assert "Maharashtra" in result_dict["daily_cases"]
-        assert len(result_dict["daily_cases"]["Maharashtra"]) == 31  # days + 1 for initial state
+        assert len(result_dict["daily_cases"]["Maharashtra"]) == 30  # days data points from diff
 
 
 class TestVariantLearner:

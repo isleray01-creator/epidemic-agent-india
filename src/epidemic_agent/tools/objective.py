@@ -36,7 +36,7 @@ class ObjectiveFunction:
         death_score = min(deaths / max(population * 0.01, 1), 1.0)
         econ_score = min(economic_cost / max(population * 10000, 1), 1.0)
         social_score = min(social_cost / 100, 1.0)
-        healthcare_score = min(icu_occupancy / max(max_icu_capacity, 1), 1.0)
+        healthcare_score = min(icu_occupancy, 1.0)
 
         total = (
             self.weights["deaths"] * death_score +

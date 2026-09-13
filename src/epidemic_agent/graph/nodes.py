@@ -185,8 +185,18 @@ def detect_shocks(state: EpidemicState) -> EpidemicState:
         actual_dict[s]["deaths"] = actual_dict[s]["deaths"][-1] if actual_dict[s]["deaths"] else 0
 
     try:
+        mapped_predicted = {}
+        for state_name in predicted.get("daily_cases", {}):
+            cases = predicted.get("daily_cases", {}).get(state_name, [])
+            deaths = predicted.get("daily_deaths", {}).get(state_name, [])
+            rt = predicted.get("daily_Rt", {}).get(state_name, [])
+            mapped_predicted["cases"] = cases[-1] if cases else 0
+            mapped_predicted["deaths"] = deaths[-1] if deaths else 0
+            mapped_predicted["Rt"] = rt[-1] if rt else 1.0
+            break
+
         shock_result = detect_variant_shock.invoke({
-            "predicted": predicted,
+            "predicted": mapped_predicted,
             "actual": actual_dict,
             "threshold": SHOCK_THRESHOLD,
         })
@@ -387,7 +397,7 @@ def select_interventions(state: EpidemicState) -> EpidemicState:
                 eval_result = {"success": False}
 
             if eval_result.get("success"):
-                score = eval_result["evaluation"].get("Rt_reduction", 0) - eval_result["evaluation"].get("cost_inr", 0) / max(state["population"].get(s, 1), 1) * 1e6
+                score = eval_result["evaluation"].get("Rt_reduction", 0) - (eval_result["evaluation"].get("cost_inr", 0) / max(state["population"].get(s, 1), 1))
                 state_scores[s].append((intervention, score))
                 intervention_records.append({
                     "day": state["current_day"],
@@ -430,14 +440,16 @@ def simulate_outcomes(state: EpidemicState) -> EpidemicState:
     else:
         variant = "wildtype"
 
+    total_population = min(sum(state["population"].values()), 1_000_000)
+
     sim_result = simulate_spread.invoke({
         "model_type": "mesa",
         "states": state["states"],
         "variant": variant,
         "days": SIMULATION_DAYS_PER_STEP,
         "interventions": interventions,
-        "initial_infected": sum(state["infected"].values()),
-        "population": sum(state["population"].values()),
+        "initial_infected": min(sum(state["infected"].values()), total_population // 100),
+        "population": total_population,
     })
 
     if sim_result.get("success"):
@@ -473,7 +485,7 @@ def evaluate_objective(state: EpidemicState) -> EpidemicState:
     social_cost = total_deaths * 100 + economic_cost * 0.01
 
     max_icu = sum(
-        state["healthcare_capacity"].get(s, {}).get("icu_beds", 0)
+        state["healthcare_capacity"].get(s, {}).get("icu", 0)
         for s in state["states"]
     )
     current_icu = sum(
@@ -500,7 +512,11 @@ def evaluate_objective(state: EpidemicState) -> EpidemicState:
         state["objective_value"] = 0.5
         state["objective_breakdown"] = {"deaths": 0, "economic": 0, "social": 0, "healthcare": 0}
 
-    state["confidence_score"] = min(state["confidence_score"], 0.8)
+    obj = state["objective_value"]
+    if obj < 0.3:
+        state["confidence_score"] = min(state["confidence_score"] + 0.05, 1.0)
+    elif obj > 0.7:
+        state["confidence_score"] = max(state["confidence_score"] - 0.05, 0.0)
 
     logger.info(f"Objective value: {state['objective_value']:.4f}")
 
@@ -512,6 +528,12 @@ def implement_or_adapt(state: EpidemicState) -> EpidemicState:
 
     shock = state.get("variant_shock", {})
     confidence = state.get("confidence_score", 0.0)
+    total_sim_days = state.get("simulation_days", 21)
+
+    if state["current_day"] + SIMULATION_DAYS_PER_STEP >= total_sim_days:
+        state["metadata"]["needs_replan"] = False
+        state["current_day"] += SIMULATION_DAYS_PER_STEP
+        return state
 
     if shock.get("shock_detected") or confidence < CONFIDENCE_THRESHOLD:
         if state["metadata"].get("adaptation_loops", 0) < MAX_ADAPTATION_LOOPS:
@@ -538,7 +560,7 @@ def finalize_recommendation(state: EpidemicState) -> EpidemicState:
     reasoning = state.get("metadata", {}).get("reasoning_result", {})
 
     recommendation = {
-        "day": state["current_day"] - SIMULATION_DAYS_PER_STEP,
+        "day": state["current_day"],
         "states": state["states"],
         "recommended_interventions": interventions,
         "projected_deaths": sum(predicted.get("total_deaths", {}).values()),

@@ -61,6 +61,7 @@ def simulate_spread(
     population = max(1, int(population))
 
     variant_params = get_variant_params(variant)
+    state_populations = {s: get_state_population(s) for s in states}
     base_params = {
         "R0": variant_params["R0"],
         "IFR": variant_params["IFR"],
@@ -73,6 +74,7 @@ def simulate_spread(
         "days": days,
         "states": states,
         "variant": variant,
+        "state_populations": state_populations,
     }
 
     params = _merge_intervention_params(interventions, base_params)

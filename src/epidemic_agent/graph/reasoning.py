@@ -139,7 +139,7 @@ class LLMReasoner:
 
         icu_util = 0.0
         for s in healthcare:
-            icu_beds = healthcare.get(s, {}).get("icu_beds", 0)
+            icu_beds = healthcare.get(s, {}).get("icu", 0)
             if icu_beds > 0:
                 current_icu = state.get("infected", {}).get(s, 0) * 0.05
                 icu_util = max(icu_util, current_icu / icu_beds)

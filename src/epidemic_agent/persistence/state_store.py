@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 class TrustedStateStore:
     def __init__(self, hmac_key: str = None, storage_dir: Path = None):
-        self.hmac_key = (hmac_key or settings.pickle_hmac_key).encode()
+        key = hmac_key or settings.pickle_hmac_key or "default-dev-key-do-not-use-in-production"
+        self.hmac_key = key.encode()
         if not self.hmac_key:
             raise ValueError("PICKLE_HMAC_KEY must be set in environment")
 

@@ -1,5 +1,6 @@
 {
-  "buildCommand": "cd aegis-biosurveillance-intelligence && npm run build",
+  "buildCommand": "cd aegis-biosurveillance-intelligence && npm install && npm run build",
   "outputDirectory": "aegis-biosurveillance-intelligence/dist",
-  "framework": "vite"
+  "framework": null,
+  "installCommand": "cd aegis-biosurveillance-intelligence && npm install"
 }

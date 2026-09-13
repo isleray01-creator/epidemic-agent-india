@@ -145,7 +145,7 @@ def run_workflow(req: WorkflowRequest):
             "current_policies": {s: req.interventions for s in req.states},
             "intervention_history": [],
             "variant_shock": None,
-            "confidence_score": 0.0,
+            "confidence_score": 0.8,
             "objective_value": 0.0,
             "objective_breakdown": {},
             "Rt_estimates": {s: 2.5 for s in req.states},

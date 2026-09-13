@@ -33,7 +33,10 @@ def _load_module(module_name):
 
 def _get_tool(name):
     if name not in _tools:
-        mod_name, attr = MODULE_MAP.get(name) or CLASS_MAP.get(name) or FUNC_MAP.get(name)
+        mapping = MODULE_MAP.get(name) or CLASS_MAP.get(name) or FUNC_MAP.get(name)
+        if mapping is None:
+            raise ValueError(f"Unknown tool: {name}")
+        mod_name, attr = mapping
         _load_module(mod_name)
         import importlib
         mod = importlib.import_module(f"epidemic_agent.tools.{mod_name}")

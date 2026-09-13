@@ -413,12 +413,12 @@ export default function App() {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         currentUser={currentUser}
-        onLoginSuccess={(user) => {
+        onLogin={(user) => {
           setCurrentUser(user);
           localStorage.setItem('epipulse_user', JSON.stringify(user));
           setIsAuthModalOpen(false);
         }}
-        onSignOut={() => {
+        onLogout={() => {
           setCurrentUser(null);
           localStorage.removeItem('epipulse_user');
         }}

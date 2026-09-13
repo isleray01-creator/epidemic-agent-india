@@ -49,7 +49,7 @@ class LLMClient:
 
     def invoke(self, messages: list) -> str:
         try:
-            response = self._primary.invoke(messages)
+            response = self.primary.invoke(messages)
             return response.content
         except Exception as e:
             logger.warning(f"Primary LLM failed: {e}, trying fallback")

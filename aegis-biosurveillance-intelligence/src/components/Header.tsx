@@ -9,14 +9,10 @@ import { PageView, PathogenTargetId, UserProfile } from '../types';
 import { PATHOGEN_TARGETS } from '../data/simulationData';
 
 interface HeaderProps {
-  currentPage: PageView;
-  onNavigate: (page: PageView) => void;
   selectedPathogenId: PathogenTargetId;
   onSelectPathogen: (id: PathogenTargetId) => void;
-  day: number;
   currentUser: UserProfile | null;
   onOpenAuth: () => void;
-  onOpenTerms: () => void;
   onPrintReport: () => void;
   onToggleMobileMenu?: () => void;
 }

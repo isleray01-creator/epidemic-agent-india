@@ -32,6 +32,8 @@ class SEIRModel:
     mask_reduction: float = 0.0
     vaccination_rate_multiplier: float = 1.0
     variant: str = "wildtype"
+    state_populations: dict[str, int] | None = None
+    state_infected: dict[str, int] | None = None
 
     def __post_init__(self):
         self.beta = self.R0 / self.infectious_period
@@ -78,10 +80,10 @@ class SEIRModel:
 
         return [dS, dE, dI, dR, dD]
 
-    def run(self) -> SimulationResult:
-        S0 = self.population - self.initial_infected
-        E0 = self.initial_infected // 2
-        I0 = self.initial_infected - E0
+    def _run_single_state(self, state_pop: int, state_infected: int) -> dict:
+        S0 = state_pop - state_infected
+        E0 = state_infected // 2
+        I0 = state_infected - E0
         R_init = 0
         D0 = 0
 
@@ -121,24 +123,39 @@ class SEIRModel:
 
         peak_day = int(np.argmax(daily_cases)) if len(daily_cases) > 0 else 0
         peak_cases = int(np.max(daily_cases)) if len(daily_cases) > 0 else 0
-        total_deaths = int(D[-1])
-        final_infected = int(self.population - S[-1])
 
-        n_days = len(daily_cases)
+        return {
+            "daily_cases": daily_cases.tolist(),
+            "daily_deaths": daily_deaths.tolist(),
+            "daily_Rt": Rt,
+            "cumulative_cases": cumulative_cases.tolist(),
+            "cumulative_deaths": cumulative_deaths.tolist(),
+            "peak_day": peak_day,
+            "peak_cases": peak_cases,
+            "total_deaths": int(D[-1]),
+            "final_infected": int(state_pop - S[-1]),
+            "variant_trajectory": [self.variant] * len(daily_cases),
+        }
+
+    def run(self) -> SimulationResult:
+        n_states = len(self.states)
+        total_pop = self.population
+        total_infected = self.initial_infected
+
         state_results = {}
-        for state in self.states:
-            state_results[state] = {
-                "daily_cases": daily_cases.tolist(),
-                "daily_deaths": daily_deaths.tolist(),
-                "daily_Rt": Rt,
-                "cumulative_cases": cumulative_cases.tolist(),
-                "cumulative_deaths": cumulative_deaths.tolist(),
-                "peak_day": peak_day,
-                "peak_cases": peak_cases,
-                "total_deaths": total_deaths,
-                "final_infected": final_infected,
-                "variant_trajectory": [self.variant] * n_days,
-            }
+
+        for state_name in self.states:
+            if self.state_populations and state_name in self.state_populations:
+                state_pop = self.state_populations[state_name]
+            else:
+                state_pop = max(1, total_pop // n_states)
+
+            if self.state_infected and state_name in self.state_infected:
+                state_inf = self.state_infected[state_name]
+            else:
+                state_inf = max(1, total_infected // n_states)
+
+            state_results[state_name] = self._run_single_state(state_pop, state_inf)
 
         return SimulationResult(
             daily_cases={s: r["daily_cases"] for s, r in state_results.items()},

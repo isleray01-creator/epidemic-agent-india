@@ -4,7 +4,7 @@
  * via the FastAPI bridge server running on port 8000.
  */
 
-const API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) || 'http://localhost:8000';
+const API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) || '';
 
 export interface SimulateRequest {
   model_type?: string;

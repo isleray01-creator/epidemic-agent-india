@@ -98,11 +98,14 @@ class ChromaMemoryStore:
             for i in range(len(results["ids"][0]))
         ]
 
-    def get_recent_decisions(self, days: int = 30, limit: int = 20) -> list[dict[str, Any]]:
-        results = self.collection.get(
-            limit=limit,
-            where={"day": {"$gte": days}},
-        )
+    def get_recent_decisions(self, max_day: int = None, limit: int = 20) -> list[dict[str, Any]]:
+        if max_day is not None:
+            results = self.collection.get(
+                limit=limit,
+                where={"day": {"$lte": max_day}},
+            )
+        else:
+            results = self.collection.get(limit=limit)
         return [
             {"id": results["ids"][i], "document": results["documents"][i], "metadata": results["metadatas"][i]}
             for i in range(len(results["ids"]))
