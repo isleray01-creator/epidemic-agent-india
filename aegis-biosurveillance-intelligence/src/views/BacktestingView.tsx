@@ -8,7 +8,8 @@ interface HistoricalVariant {
   actualPeakCases: string;
   predictedPeakCases: string;
   peakDayVariance: string;
-  mapeAccuracy: string;
+  modelFitAccuracy: string;
+  mapeError: string;
   r0Real: number;
   r0Predicted: number;
   status: 'Validated' | 'Historical Benchmark' | 'Active Testing';
@@ -25,7 +26,8 @@ export const BacktestingView: React.FC = () => {
       actualPeakCases: '2.10M (projected)',
       predictedPeakCases: '2.18M (ensemble)',
       peakDayVariance: '+2 Days',
-      mapeAccuracy: '95.8%',
+      modelFitAccuracy: '95.8%',
+      mapeError: '4.2%',
       r0Real: 2.38,
       r0Predicted: 2.45,
       status: 'Active Testing',
@@ -37,7 +39,8 @@ export const BacktestingView: React.FC = () => {
       actualPeakCases: '3.91M',
       predictedPeakCases: '3.84M',
       peakDayVariance: '-1 Day',
-      mapeAccuracy: '97.2%',
+      modelFitAccuracy: '97.2%',
+      mapeError: '2.8%',
       r0Real: 3.20,
       r0Predicted: 3.14,
       status: 'Historical Benchmark',
@@ -49,7 +52,8 @@ export const BacktestingView: React.FC = () => {
       actualPeakCases: '48 Cases (Localized Ring)',
       predictedPeakCases: '52 Cases',
       peakDayVariance: '0 Days',
-      mapeAccuracy: '93.1%',
+      modelFitAccuracy: '93.1%',
+      mapeError: '6.9%',
       r0Real: 0.48,
       r0Predicted: 0.51,
       status: 'Validated',
@@ -61,7 +65,8 @@ export const BacktestingView: React.FC = () => {
       actualPeakCases: '1.2K (Poultry/Zoonotic Sentinel)',
       predictedPeakCases: '1.4K',
       peakDayVariance: '+1 Day',
-      mapeAccuracy: '91.4%',
+      modelFitAccuracy: '91.4%',
+      mapeError: '8.6%',
       r0Real: 0.88,
       r0Predicted: 0.94,
       status: 'Validated',
@@ -177,7 +182,7 @@ export const BacktestingView: React.FC = () => {
                 </div>
                 <div className="flex items-center justify-between text-xs text-slate-500 font-mono">
                   <span>Period: {v.wavePeriod}</span>
-                  <span className="font-bold text-teal-800">MAPE: {v.mapeAccuracy}</span>
+                  <span className="font-bold text-teal-800">MAPE: {v.mapeError} (Fit: {v.modelFitAccuracy})</span>
                 </div>
               </div>
             );
@@ -223,12 +228,12 @@ export const BacktestingView: React.FC = () => {
           <div className="space-y-2 pt-2">
             <span className="text-xs font-bold text-slate-600 block">Concordance Ratio vs Ground Truth</span>
             <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden flex">
-              <div className="bg-[#0d3b36] h-full" style={{ width: currentVariant.mapeAccuracy }} />
+              <div className="bg-[#0d3b36] h-full" style={{ width: currentVariant.modelFitAccuracy }} />
               <div className="bg-slate-300 h-full flex-1" />
             </div>
             <div className="flex justify-between text-[11px] font-mono text-slate-500">
-              <span>Fit: {currentVariant.mapeAccuracy}</span>
-              <span>Residual Error: {(100 - parseFloat(currentVariant.mapeAccuracy)).toFixed(1)}%</span>
+              <span>Model Fit Accuracy: {currentVariant.modelFitAccuracy}</span>
+              <span>MAPE Error Rate: {currentVariant.mapeError}</span>
             </div>
           </div>
         </div>
